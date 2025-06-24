@@ -23,6 +23,7 @@ class Settings(BaseSettings):
    
     # Google Cloud Storage
     google_application_credentials: str
+    google_creds_json: Optional[str] = None  # Optional JSON credentials path
     gcp_bucket_name: str
     gcp_use_cases_bucket_name: str
     gcp_indexes_bucket_name: str
@@ -111,7 +112,6 @@ def validate_settings():
     required_vars = [
         "mongodb_url",
         "openai_api_key", 
-        "google_application_credentials",
         "gcp_bucket_name",
         "gcp_use_cases_bucket_name",
         "gcp_indexes_bucket_name"
@@ -126,4 +126,12 @@ def validate_settings():
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
    
     # Set Google Cloud credentials
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+    if settings.google_creds_json:
+        temp_path = "/tmp/google-creds.json"
+        with open(temp_path, "w") as f:
+            f.write(settings.google_creds_json)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
+    elif settings.google_application_credentials:
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+    else:
+        raise EnvironmentError("Missing Google credentials (JSON or path)")
