@@ -128,7 +128,7 @@ def validate_settings():
     # Set Google Cloud credentials
     if settings.google_creds_json:
         temp_path = "/tmp/google-creds.json"
-        with open(temp_path, "w") as f:
+        with open(temp_path, "w", encoding="utf8") as f:
             f.write(settings.google_creds_json)
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
     elif settings.google_application_credentials:
