@@ -610,4 +610,10 @@ class RAGService:
             raise
 
 # Global RAG service instance
-rag_service = RAGService()
+rag_service = None
+
+def get_rag_service():
+    global rag_service
+    if rag_service is None:
+        rag_service = RAGService()
+    return rag_service
