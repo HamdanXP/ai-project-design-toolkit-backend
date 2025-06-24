@@ -1,0 +1,31 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+python-dotenv
+
+# LLM and AI
+llama-index
+openai
+PyMuPDF
+
+# Database
+motor
+pymongo
+beanie
+certifi
+
+# Google Cloud
+google-cloud-storage
+
+# Utilities
+aiohttp
+asyncio-throttle
+validators
+python-magic
+
+# Development
+pytest
+pytest-asyncio
+black
