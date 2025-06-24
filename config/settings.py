@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import Optional, List, Union
 import os
+import base64
+
 
 class Settings(BaseSettings):
     # Application
@@ -23,7 +25,7 @@ class Settings(BaseSettings):
    
     # Google Cloud Storage
     google_application_credentials: str
-    google_creds_json: Optional[str] = None  # Optional JSON credentials path
+    google_creds_b64: Optional[str] = None  # Optional JSON credentials path
     gcp_bucket_name: str
     gcp_use_cases_bucket_name: str
     gcp_indexes_bucket_name: str
@@ -126,10 +128,11 @@ def validate_settings():
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
    
     # Set Google Cloud credentials
-    if settings.google_creds_json:
+    if settings.google_creds_b64:
         temp_path = "/tmp/google-creds.json"
-        with open(temp_path, "w", encoding="utf8") as f:
-            f.write(settings.google_creds_json)
+        decoded = base64.b64decode(settings.google_creds_b64)
+        with open(temp_path, "wb") as f:
+            f.write(decoded)
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
     elif settings.google_application_credentials:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
