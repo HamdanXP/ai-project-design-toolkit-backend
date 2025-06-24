@@ -1,10 +1,10 @@
 from typing import Dict, Any, List
 from core.llm_service import llm_service
-from services.rag_service import rag_service
 from models.project import EthicalAssessment
 import services.project_service as project_service
 import json
 import logging
+from core import context as ctx
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class ReflectionService:
         """Generate contextual reflection questions with dynamic selection"""
         
         # Get context from knowledge base
-        context = await rag_service.get_context_for_reflection(project_description)
+        context = await ctx.rag_service.get_context_for_reflection(project_description)
         
         prompt = f"""
         Context from humanitarian AI best practices:
@@ -149,7 +149,7 @@ class ReflectionService:
         """Create comprehensive ethical assessment with dynamic question analysis"""
 
         # Get context from knowledge base
-        context = await rag_service.get_context_for_reflection(project_description)
+        context = await ctx.rag_service.get_context_for_reflection(project_description)
         
         # Build questions and answers context
         qa_context = ""

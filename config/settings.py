@@ -127,14 +127,3 @@ def validate_settings():
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
    
-    # Set Google Cloud credentials
-    if settings.google_creds_b64:
-        temp_path = os.path.join(tempfile.gettempdir(), "google-creds.json")
-        decoded = base64.b64decode(settings.google_creds_b64)
-        with open(temp_path, "wb") as f:
-            f.write(decoded)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
-    elif settings.google_application_credentials:
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
-    else:
-        raise EnvironmentError("Missing Google credentials (JSON or path)")

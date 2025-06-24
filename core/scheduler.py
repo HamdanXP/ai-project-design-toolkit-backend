@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from services.rag_service import rag_service
+from core import context as ctx
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class IndexRefreshScheduler:
         """Main refresh loop"""
         while self.running:
             try:
-                await rag_service.refresh_indexes_if_needed()
+                await ctx.rag_service.refresh_indexes_if_needed()
                 # Sleep for 1 hour before checking again
                 await asyncio.sleep(3600)
             except asyncio.CancelledError:

@@ -4,8 +4,8 @@ import logging
 import re
 import hashlib
 from typing import List, Dict, Any, Optional, Tuple
+from core import context as ctx
 from core.llm_service import llm_service
-from services.rag_service import rag_service
 from models.development import (
     ProjectContext, AISolution, EthicalSafeguard, TechnicalArchitecture,
     ProjectRecommendation, DevelopmentPhaseData, GeneratedProject,
@@ -222,14 +222,14 @@ class DevelopmentService:
         """Generate project structure with guided flexibility - dynamic technology choices within proven patterns"""
         
         # Get comprehensive context for informed decisions
-        technical_context = await rag_service.get_technical_implementation_context(
+        technical_context = await ctx.rag_service.get_technical_implementation_context(
             ai_technique=solution.get("ai_technique", "classification"),
             deployment_strategy=solution.get("deployment_strategy", "cloud_native"),
             complexity_level=solution.get("complexity_level", "moderate"),
             project_description=project.description
         )
         
-        case_studies_context = await rag_service.get_real_world_case_studies_context(
+        case_studies_context = await ctx.rag_service.get_real_world_case_studies_context(
             ai_technique=solution.get("ai_technique", "classification"),
             problem_domain=getattr(project, 'problem_domain', 'humanitarian'),
             project_description=project.description
@@ -656,7 +656,7 @@ class DevelopmentService:
         ai_technique = solution.get("ai_technique", "classification")
         
         # Get ethical frameworks context for validation
-        ethical_context = await rag_service.get_ethical_frameworks_context(
+        ethical_context = await ctx.rag_service.get_ethical_frameworks_context(
             ai_technique=ai_technique,
             project_description=project.description,
             target_beneficiaries=await self._extract_target_beneficiaries_dynamically(project)
@@ -1084,7 +1084,7 @@ class DevelopmentService:
         target_beneficiaries = await self._extract_target_beneficiaries_dynamically(project)
         
         # Get comprehensive context from humanitarian AI knowledge base
-        rag_context = await rag_service.get_comprehensive_development_context(
+        rag_context = await ctx.rag_service.get_comprehensive_development_context(
             project_description=project.description,
             ai_technique=primary_ai_technique,
             deployment_strategy=primary_deployment,
@@ -1094,7 +1094,7 @@ class DevelopmentService:
         )
         
         # Get real-world case studies
-        case_studies_context = await rag_service.get_real_world_case_studies_context(
+        case_studies_context = await ctx.rag_service.get_real_world_case_studies_context(
             ai_technique=primary_ai_technique,
             problem_domain=getattr(project, 'problem_domain', 'humanitarian'),
             project_description=project.description
@@ -1393,7 +1393,7 @@ class DevelopmentService:
         target_beneficiaries = await self._extract_target_beneficiaries_dynamically(project)
         
         # GET ETHICAL FRAMEWORKS CONTEXT from RAG
-        ethical_context = await rag_service.get_ethical_frameworks_context(
+        ethical_context = await ctx.rag_service.get_ethical_frameworks_context(
             ai_technique=ai_technique,
             project_description=project.description,
             target_beneficiaries=target_beneficiaries
@@ -1603,7 +1603,7 @@ class DevelopmentService:
         target_beneficiaries = await self._extract_target_beneficiaries_dynamically(project)
         
         # GET BIAS TESTING FRAMEWORKS from RAG
-        bias_testing_context = await rag_service.get_bias_testing_frameworks_context(
+        bias_testing_context = await ctx.rag_service.get_bias_testing_frameworks_context(
             ai_technique=ai_technique,
             target_beneficiaries=target_beneficiaries,
             project_description=project.description
@@ -1646,7 +1646,7 @@ class DevelopmentService:
         deployment_strategy = solution.get("deployment_strategy", "cloud_native")
         
         # GET MONITORING FRAMEWORKS from RAG
-        monitoring_context = await rag_service.get_monitoring_frameworks_context(
+        monitoring_context = await ctx.rag_service.get_monitoring_frameworks_context(
             ai_technique=ai_technique,
             deployment_strategy=deployment_strategy,
             project_description=project.description

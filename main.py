@@ -1,3 +1,6 @@
+import base64
+import os
+import tempfile
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -8,6 +11,8 @@ from core.database import connect_to_mongo, close_mongo_connection
 from api.v1.router import api_router
 from utils.humanitarian_sources import HumanitarianDataSources
 from core.scheduler import refresh_scheduler
+from services.rag_service import RAGService
+from core import context as ctx
 
 # Configure logging
 logging.basicConfig(
@@ -27,14 +32,22 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         logger.info("Starting AI Project Design Toolkit API...")
+
+        if settings.google_creds_b64:
+            temp_path = os.path.join(tempfile.gettempdir(), "google-creds.json")
+            with open(temp_path, "wb") as f:
+                f.write(base64.b64decode(settings.google_creds_b64))
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
+        elif settings.google_application_credentials:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+        else:
+            raise EnvironmentError("Missing Google credentials (JSON or path)")
         
+        ctx.rag_service = RAGService()
+
         validate_settings()
         await connect_to_mongo()
-        
-        # Initialize RAG indexes
-        await rag_service.initialize_indexes()
-        
-        # Start index refresh scheduler
+        await ctx.rag_service.initialize_indexes()
         await refresh_scheduler.start()
         
         logger.info("API started successfully")

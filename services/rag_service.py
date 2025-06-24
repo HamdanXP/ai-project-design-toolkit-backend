@@ -608,6 +608,4 @@ class RAGService:
         except Exception as e:
             logger.error(f"Failed to force refresh indexes: {e}")
             raise
-
-# Global RAG service instance
-rag_service = RAGService()
+        
