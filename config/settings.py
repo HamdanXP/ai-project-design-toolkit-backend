@@ -3,7 +3,7 @@ from pydantic import field_validator
 from typing import Optional, List, Union
 import os
 import base64
-
+import tempfile
 
 class Settings(BaseSettings):
     # Application
@@ -129,7 +129,7 @@ def validate_settings():
    
     # Set Google Cloud credentials
     if settings.google_creds_b64:
-        temp_path = "/tmp/google-creds.json"
+        temp_path = os.path.join(tempfile.gettempdir(), "google-creds.json")
         decoded = base64.b64decode(settings.google_creds_b64)
         with open(temp_path, "wb") as f:
             f.write(decoded)

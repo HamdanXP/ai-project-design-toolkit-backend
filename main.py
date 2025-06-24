@@ -7,7 +7,7 @@ from config.settings import settings, validate_settings
 from core.database import connect_to_mongo, close_mongo_connection
 from api.v1.router import api_router
 from utils.humanitarian_sources import HumanitarianDataSources
-from services.rag_service import get_rag_service
+from services.rag_service import rag_service
 from core.scheduler import refresh_scheduler
 
 # Configure logging
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
         await connect_to_mongo()
         
         # Initialize RAG indexes
-        await get_rag_service().initialize_indexes()
+        await rag_service.initialize_indexes()
         
         # Start index refresh scheduler
         await refresh_scheduler.start()
