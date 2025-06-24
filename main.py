@@ -7,7 +7,6 @@ from config.settings import settings, validate_settings
 from core.database import connect_to_mongo, close_mongo_connection
 from api.v1.router import api_router
 from utils.humanitarian_sources import HumanitarianDataSources
-from services.rag_service import rag_service
 from core.scheduler import refresh_scheduler
 
 # Configure logging
@@ -16,6 +15,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+rag_service = None
 
 # Global humanitarian data sources instance
 humanitarian_sources = HumanitarianDataSources()
