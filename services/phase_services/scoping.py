@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 from config import settings
 from core.llm_service import llm_service
 from services.use_case_search_service import UseCaseSearchService
-from services.dataset_discovery_service import DatasetDiscoveryService
+from services.datasets.discovery_service import DatasetDiscoveryService
 from models.project import UseCase, Dataset, DeploymentEnvironment
 from models.phase import ScopingRequest, ScopingResponse
 import logging

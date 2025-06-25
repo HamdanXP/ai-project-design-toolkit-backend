@@ -4,7 +4,7 @@ from models.project import EthicalAssessment
 import services.project_service as project_service
 import json
 import logging
-from core import context as ctx
+import core as ctx
 
 logger = logging.getLogger(__name__)
 
