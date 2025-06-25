@@ -4,14 +4,14 @@ import logging
 import re
 import hashlib
 from typing import List, Dict, Any, Optional, Tuple
-from core import context as ctx
+import core as ctx
 from core.llm_service import llm_service
 from models.development import (
     ProjectContext, AISolution, EthicalSafeguard, TechnicalArchitecture,
     ProjectRecommendation, DevelopmentPhaseData, GeneratedProject,
-    ProjectGenerationRequest, AITechnique, DeploymentStrategy, 
-    ComplexityLevel, ResourceRequirement, ProjectContextOnly, SolutionsData
+    ProjectGenerationRequest, ResourceRequirement, ProjectContextOnly, SolutionsData
 )
+from models.development.enums import AITechnique, DeploymentStrategy, ComplexityLevel
 from models.project import Project
 
 logger = logging.getLogger(__name__)

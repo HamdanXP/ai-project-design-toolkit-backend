@@ -3,7 +3,7 @@ from typing import Optional
 from services.project_service import ProjectService
 from services.llm_analyzer import LLMAnalyzer
 from services.document_service import DocumentService
-from services.dataset_service import DatasetService
+from services.datasets.management_service import DatasetService
 from services.phase_services.reflection import ReflectionService
 from services.phase_services.scoping import ScopingService
 from services.phase_services.development import DevelopmentService

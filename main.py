@@ -12,7 +12,7 @@ from api.v1.router import api_router
 from utils.humanitarian_sources import HumanitarianDataSources
 from core.scheduler import refresh_scheduler
 from services.rag_service import RAGService
-from core import context as ctx
+import core as ctx
 
 # Configure logging
 logging.basicConfig(
@@ -20,8 +20,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-rag_service = None
 
 # Global humanitarian data sources instance
 humanitarian_sources = HumanitarianDataSources()

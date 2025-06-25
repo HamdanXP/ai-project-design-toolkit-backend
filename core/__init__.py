@@ -12,6 +12,8 @@ from .exceptions import (
     DataProcessingError,
     create_http_exception
 )
+from typing import Optional
+from services.rag_service import RAGService
 
 __all__ = [
     "connect_to_mongo",
@@ -24,5 +26,8 @@ __all__ = [
     "PhaseValidationError",
     "EthicalAssessmentError",
     "DataProcessingError",
-    "create_http_exception"
+    "create_http_exception",
+    "rag_service",
 ]
+
+rag_service: Optional[RAGService] = None

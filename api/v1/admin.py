@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any
 from config import settings
-from core import context
+import core
 from models.response import APIResponse
 import logging
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 async def get_indexes_info():
     """Get information about stored indexes"""
     try:
-        index_info = await context.rag_service.get_index_info()
+        index_info = await core.rag_service.get_index_info()
         return APIResponse(
             data=index_info,
             message="Index information retrieved"
@@ -25,7 +25,7 @@ async def get_indexes_info():
 async def force_refresh_indexes():
     """Force refresh all indexes (admin operation)"""
     try:
-        await context.rag_service.force_refresh_indexes()
+        await core.rag_service.force_refresh_indexes()
         return APIResponse(
             data="success",
             message="Indexes refreshed successfully"
@@ -40,9 +40,9 @@ async def get_rag_status():
     try:
         status = {
             "rag_enabled": settings.rag_enabled,
-            "main_index_loaded": context.rag_service.main_index is not None,
-            "use_cases_index_loaded": context.rag_service.use_cases_index is not None,
-            "last_refresh": context.rag_service.last_refresh,
+            "main_index_loaded": core.rag_service.main_index is not None,
+            "use_cases_index_loaded": core.rag_service.use_cases_index is not None,
+            "last_refresh": core.rag_service.last_refresh,
             "refresh_interval_hours": settings.index_refresh_hours
         }
         
