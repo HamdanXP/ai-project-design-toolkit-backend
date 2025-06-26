@@ -1,17 +1,18 @@
 from typing import List, Optional, Dict, Any
-from models.project import Project, ProjectStatus, EthicalAssessment, UseCase, Dataset, DataSuitabilityAssessment, DeploymentEnvironment, EvaluationResults
+from models.project import EthicalConsideration, Project, ProjectStatus, EthicalAssessment, UseCase, Dataset, DataSuitabilityAssessment, DeploymentEnvironment, EvaluationResults
 from core.exceptions import ProjectNotFoundError
-from services.domain_extraction_service import DomainExtractionService
+from services.project_analysis_service import ProjectAnalysisService
 from bson import ObjectId
 from datetime import datetime
 import logging
+import core
 
 logger = logging.getLogger(__name__)
 
 class ProjectService:
     def __init__(self):
-        self.domain_extraction = DomainExtractionService()
-
+        self.project_analysis = ProjectAnalysisService()
+        
     async def create_project(
         self,
         description: str,
@@ -19,12 +20,28 @@ class ProjectService:
         context: Optional[str] = None,
         tags: List[str] = None
     ) -> Project:
-        """Create a new project with problem domain extraction"""
+        """Create a new project with comprehensive info extraction and ethical considerations"""
         try:
-            # Extract problem domain when creating project
-            problem_domain = await self.domain_extraction.extract_problem_domain(
-                description, context
+            # Extract comprehensive project information using the new service
+            project_info = await self.project_analysis.extract_project_info(description, context)
+            
+            # Only problem_domain has fallback, others can be None
+            problem_domain = project_info.get("problem_domain", "general_humanitarian")
+            target_beneficiaries = project_info.get("target_beneficiaries")
+            geographic_context = project_info.get("geographic_context")
+            urgency_level = project_info.get("urgency_level")
+            
+            ethical_considerations_data = await core.rag_service.get_ethical_considerations_for_project(
+                project_description=description,
+                problem_domain=problem_domain,
+                target_beneficiaries=target_beneficiaries or ""
             )
+            
+            # Convert to EthicalConsideration objects
+            ethical_considerations = [
+                EthicalConsideration(**consideration)
+                for consideration in ethical_considerations_data
+            ]
             
             project = Project(
                 title=title,
@@ -33,11 +50,20 @@ class ProjectService:
                 tags=tags or [],
                 status=ProjectStatus.CREATED,
                 current_phase="reflection",
-                problem_domain=problem_domain  # Store the domain
+                problem_domain=problem_domain,
+                target_beneficiaries=target_beneficiaries,  # Can be None
+                geographic_context=geographic_context,      # Can be None
+                urgency_level=urgency_level,                # Can be None
+                ethical_considerations=ethical_considerations,
+                ethical_considerations_acknowledged=False
             )
             
             await project.insert()
-            logger.info(f"Created project: {project.id} with domain: {problem_domain}")
+            logger.info(
+                f"Created project: {project.id} with domain: {problem_domain}, "
+                f"beneficiaries: {target_beneficiaries or 'not extracted'}, "
+                f"and {len(ethical_considerations)} ethical considerations"
+            )
             return project
         except Exception as e:
             logger.error(f"Failed to create project: {e}")
@@ -67,7 +93,7 @@ class ProjectService:
                 return project.problem_domain
             else:
                 # Extract and store domain if not available
-                domain = await self.domain_extraction.extract_problem_domain(
+                domain = await self.project_analysis.extract_problem_domain(
                     project.description, project.context
                 )
                 project.problem_domain = domain
@@ -95,7 +121,7 @@ class ProjectService:
             
             # Ensure problem domain is set
             if not hasattr(project, 'problem_domain') or not project.problem_domain:
-                project.problem_domain = await self.domain_extraction.extract_problem_domain(
+                project.problem_domain = await self.project_analysis.extract_problem_domain(
                     project.description, project.context
                 )
                 await project.save()
@@ -320,3 +346,94 @@ class ProjectService:
             "key_constraints": scoping_data.get("feasibility_summary", {}).get("key_constraints", []),
             "ready_to_proceed": scoping_data.get("ready_to_proceed", False)
         }
+
+    async def get_ethical_considerations(self, project_id: str) -> List[Dict[str, Any]]:
+        """Get ethical considerations for a project"""
+        try:
+            project = await self.get_project(project_id)
+            if not project or not project.ethical_considerations:
+                return []
+            
+            return [consideration.dict() for consideration in project.ethical_considerations]
+        except Exception as e:
+            logger.error(f"Failed to get ethical considerations for project {project_id}: {e}")
+            return []
+
+    async def acknowledge_ethical_considerations(
+        self, 
+        project_id: str, 
+        acknowledged_considerations: List[str] = None
+    ) -> bool:
+        """Mark ethical considerations as acknowledged by user"""
+        try:
+            project = await self.get_project(project_id)
+            if not project:
+                return False
+            
+            # Mark overall acknowledgment
+            project.ethical_considerations_acknowledged = True
+            
+            # Mark specific considerations as acknowledged if provided
+            if acknowledged_considerations and project.ethical_considerations:
+                for consideration in project.ethical_considerations:
+                    if consideration.id in acknowledged_considerations:
+                        consideration.acknowledged = True
+            
+            project.touch()
+            await project.save()
+            
+            logger.info(f"Acknowledged ethical considerations for project {project_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to acknowledge ethical considerations for project {project_id}: {e}")
+            return False
+
+    async def refresh_ethical_considerations(self, project_id: str) -> List[Dict[str, Any]]:
+        """Refresh ethical considerations for a project (useful if RAG data is updated)"""
+        try:
+            project = await self.get_project(project_id)
+            if not project:
+                return []
+            
+            # Use stored target beneficiaries (can be None)
+            target_beneficiaries = project.target_beneficiaries
+            
+            # Check if reflection data has more specific beneficiary information
+            if project.reflection_data and project.reflection_data.get("answers"):
+                answers = project.reflection_data["answers"]
+                for key, answer in answers.items():
+                    if ("beneficiar" in key.lower() or "target" in key.lower()) and answer.strip():
+                        # Use reflection answer if it's available and target_beneficiaries wasn't extracted
+                        if not target_beneficiaries or len(answer.strip()) > len(target_beneficiaries):
+                            target_beneficiaries = answer.strip()
+                        break
+            
+            # Get fresh ethical considerations 
+            # Use empty string if target_beneficiaries is None since RAG query needs a string
+            ethical_considerations_data = await core.rag_service.get_ethical_considerations_for_project(
+                project_description=project.description,
+                problem_domain=project.problem_domain or "general_humanitarian",
+                target_beneficiaries=target_beneficiaries or ""
+            )
+            
+            # Convert to EthicalConsideration objects
+            project.ethical_considerations = [
+                EthicalConsideration(**consideration)
+                for consideration in ethical_considerations_data
+            ]
+            
+            # Reset acknowledgment since considerations have changed
+            project.ethical_considerations_acknowledged = False
+            
+            # Update target beneficiaries if we found better info from reflection
+            if target_beneficiaries and target_beneficiaries != project.target_beneficiaries:
+                project.target_beneficiaries = target_beneficiaries
+            
+            project.touch()
+            await project.save()
+            
+            logger.info(f"Refreshed ethical considerations for project {project_id} with beneficiaries: {target_beneficiaries or 'not specified'}")
+            return ethical_considerations_data
+        except Exception as e:
+            logger.error(f"Failed to refresh ethical considerations for project {project_id}: {e}")
+            return []

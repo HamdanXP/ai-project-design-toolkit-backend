@@ -30,3 +30,10 @@ class ComplexityLevel(str, Enum):
     MODERATE = "moderate"
     ADVANCED = "advanced"
     ENTERPRISE = "enterprise"
+
+class IndexDomain(Enum):
+    """Domain types for specialized indexes"""
+    AI_ETHICS = "ai_ethics"
+    HUMANITARIAN_CONTEXT = "humanitarian_context"
+    AI_TECHNICAL = "ai_technical"
+    USE_CASES = "use_cases"

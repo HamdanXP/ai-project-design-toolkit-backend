@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
-from models.development.enums import (
+from models.enums import (
     AITechnique,
     DeploymentStrategy,
     ComplexityLevel,

@@ -10,7 +10,7 @@ never re-exported here.  To make the API consistent we re-export the commonly
 used classes from the module.
 """
 
-from .enums import AITechnique, DeploymentStrategy, ComplexityLevel
+from models.enums import AITechnique, DeploymentStrategy, ComplexityLevel
 from ..development_models import (
     ResourceRequirement,
     ProjectRecommendation,

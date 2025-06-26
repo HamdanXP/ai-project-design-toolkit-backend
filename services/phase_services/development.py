@@ -11,7 +11,7 @@ from models.development import (
     ProjectRecommendation, DevelopmentPhaseData, GeneratedProject,
     ProjectGenerationRequest, ResourceRequirement, ProjectContextOnly, SolutionsData
 )
-from models.development.enums import AITechnique, DeploymentStrategy, ComplexityLevel
+from models.enums import AITechnique, DeploymentStrategy, ComplexityLevel
 from models.project import Project
 
 logger = logging.getLogger(__name__)

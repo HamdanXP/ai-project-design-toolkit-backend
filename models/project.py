@@ -104,6 +104,25 @@ class EvaluationResults(BaseModel):
     ready_for_deployment: bool = False
     recommendations: List[str] = []
 
+class EthicalConsideration(BaseModel):
+    id: str
+    title: str
+    description: str
+    category: str  # data_protection, bias_fairness, transparency, etc.
+    priority: str  # high, medium, low
+    source_reference: Optional[str] = None  # SOURCE_X reference
+    source_filename: str
+    source_bucket: Optional[str] = None
+    source_page: Optional[str] = None
+    source_excerpt: Optional[str] = None
+    source_updated: Optional[str] = None
+    source_size: Optional[int] = None
+    source_url: Optional[str] = None
+    actionable_steps: List[str] = []
+    why_important: str
+    beneficiary_impact: Optional[str] = None
+    acknowledged: bool = False
+
 class Project(Document):
     # Basic Information
     title: str
@@ -130,6 +149,16 @@ class Project(Document):
     selected_dataset: Optional[Dataset] = None
     deployment_environment: Optional[DeploymentEnvironment] = None    
     evaluation_results: Optional[EvaluationResults] = None
+
+    # Enhanced project information
+    problem_domain: Optional[str] = None
+    target_beneficiaries: Optional[str] = None
+    geographic_context: Optional[str] = None 
+    urgency_level: Optional[str] = None
+    
+    # Add ethical considerations field
+    ethical_considerations: Optional[List[EthicalConsideration]] = None
+    ethical_considerations_acknowledged: bool = False  # Whether user has reviewed ethical considerations
     
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
