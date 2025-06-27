@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     enable_ai_technical_index: bool = True
     enable_use_cases_bucket: bool = True
    
+   # Guidance Relevance Settings
+    guidance_relevance_threshold: float = 0.7  # Minimum relevance score (0.0-1.0)
+    max_guidance_sources_per_question: int = 2  # Maximum sources per question
+    guidance_keyword_weight: float = 0.6  # Weight for keyword overlap (increased)
+    guidance_context_weight: float = 0.4  # Weight for contextual relevance
+    
+    # Enable/disable guidance entirely if needed
+    enable_question_guidance: bool = True
+
     # External Data Source APIs
     semantic_scholar_api_key: Optional[str] = None
     reliefweb_api_url: str = "https://api.reliefweb.int/v1"

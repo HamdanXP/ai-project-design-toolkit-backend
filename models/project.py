@@ -123,6 +123,26 @@ class EthicalConsideration(BaseModel):
     beneficiary_impact: Optional[str] = None
     acknowledged: bool = False
 
+class GuidanceSource(BaseModel):
+    """Guidance source for reflection questions"""
+    content: str
+    source_id: str
+    filename: str
+    bucket: str
+    folder: str
+    domain: str
+    source_location: str
+    page: Optional[str] = None
+    updated: Optional[str] = None
+    size: Optional[int] = None
+    guidance_area: str
+    domain_context: str
+
+class ReflectionQuestion(BaseModel):
+    """Enhanced reflection question with guidance sources"""
+    question: str
+    guidance_sources: List[GuidanceSource] = []
+
 class Project(Document):
     # Basic Information
     title: str
@@ -137,6 +157,7 @@ class Project(Document):
     
     # Phase Data - Simplified
     reflection_questions: Optional[Dict[str, str]] = None
+    reflection_questions_with_guidance: Optional[Dict[str, ReflectionQuestion]] = None
     reflection_data: Optional[Dict[str, Any]] = None
     scoping_data: Optional[Dict[str, Any]] = None
     development_data: Optional[Dict[str, Any]] = None  # Now stores the new development phase data

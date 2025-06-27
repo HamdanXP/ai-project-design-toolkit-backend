@@ -409,7 +409,187 @@ class RAGService:
         except Exception as e:
             logger.warning(f"Failed to get case studies context: {e}")
             return ""
-    
+
+    async def get_question_specific_guidance_sources(
+        self, 
+        question_text: str,
+        question_area: str,
+        project_description: str,
+        max_sources: int = 2  # Reduced to only get the most relevant
+    ) -> List[Dict[str, Any]]:
+        """Get highly relevant guidance sources for a specific question"""
+        if not settings.rag_enabled:
+            return []
+        
+        try:
+            # Extract key concepts from the question for targeted search
+            search_query = self._build_targeted_query(question_text, project_description)
+            
+            logger.info(f"Searching for guidance with query: {search_query[:100]}...")
+            
+            # Search across relevant domains
+            domains_to_search = self._select_relevant_domains(question_area)
+            
+            all_sources = []
+            for domain in domains_to_search:
+                if self.indexes[domain] is not None:
+                    sources = await self._query_domain_index_with_sources(domain, search_query)
+                    
+                    # Add domain context to each source
+                    for source in sources[:5]:  # Get more candidates for filtering
+                        source['guidance_area'] = question_area
+                        source['domain_context'] = domain.value
+                    
+                    all_sources.extend(sources[:5])
+            
+            if not all_sources:
+                logger.info(f"No sources found for question: {question_text[:50]}...")
+                return []
+            
+            # Evaluate relevance and filter
+            relevant_sources = self._evaluate_and_filter_sources(
+                sources=all_sources,
+                question_text=question_text,
+                min_relevance_score=0.7,  # Only high-relevance sources
+                max_sources=max_sources
+            )
+            
+            logger.info(f"Filtered to {len(relevant_sources)} highly relevant sources for question")
+            return relevant_sources
+            
+        except Exception as e:
+            logger.warning(f"Failed to get question-specific guidance: {e}")
+            return []
+
+    def _build_targeted_query(self, question_text: str, project_description: str) -> str:
+        """Build a targeted search query from the specific question"""
+        
+        # Extract key terms from the question (simple but effective)
+        question_lower = question_text.lower()
+        
+        # Remove common question words to focus on content
+        stopwords = {
+            'what', 'how', 'why', 'when', 'where', 'who', 'which', 'can', 'will', 
+            'should', 'could', 'would', 'do', 'does', 'is', 'are', 'the', 'a', 'an',
+            'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'
+        }
+        
+        # Extract meaningful terms (longer than 3 chars, not stopwords)
+        words = question_text.split()
+        key_terms = [
+            word.strip('.,?!') for word in words 
+            if len(word) > 3 and word.lower().strip('.,?!') not in stopwords
+        ]
+        
+        # Take top terms + project context
+        main_terms = ' '.join(key_terms[:8])  # Limit to avoid too long queries
+        project_context = project_description[:200]  # Brief project context
+        
+        # Build focused query
+        query = f"humanitarian AI {main_terms} {project_context} best practices guidance"
+        
+        return query
+
+    def _select_relevant_domains(self, question_area: str) -> List[IndexDomain]:
+        """Select most relevant domains based on question area"""
+        
+        # Map question areas to most relevant domains
+        domain_mapping = {
+            "problem_definition": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
+            "target_beneficiaries": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
+            "potential_harm": [IndexDomain.AI_ETHICS, IndexDomain.HUMANITARIAN_CONTEXT],
+            "data_availability": [IndexDomain.AI_ETHICS, IndexDomain.AI_TECHNICAL],
+            "technical_feasibility": [IndexDomain.AI_TECHNICAL, IndexDomain.HUMANITARIAN_CONTEXT],
+            "stakeholder_involvement": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
+            "cultural_sensitivity": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
+            "resource_constraints": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_TECHNICAL],
+            "success_metrics": [IndexDomain.AI_TECHNICAL, IndexDomain.HUMANITARIAN_CONTEXT],
+            "sustainability": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_TECHNICAL],
+            "privacy_security": [IndexDomain.AI_ETHICS, IndexDomain.AI_TECHNICAL]
+        }
+        
+        return domain_mapping.get(question_area, [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS])
+
+    def _calculate_relevance_score(
+        self,
+        question_text: str,
+        content: str
+    ) -> float:
+        """Calculate relevance score based purely on content quality and keyword relevance"""
+        
+        # Extract key terms from question (remove stopwords)
+        stopwords = {
+            'what', 'how', 'why', 'when', 'where', 'who', 'which', 'can', 'will', 
+            'should', 'could', 'would', 'do', 'does', 'is', 'are', 'the', 'a', 'an',
+            'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'
+        }
+        
+        question_words = set(
+            word.strip('.,?!').lower() 
+            for word in question_text.split() 
+            if len(word) > 3 and word.lower().strip('.,?!') not in stopwords
+        )
+        
+        content_words = set(content.lower().split())
+        
+        # 1. Direct keyword relevance (60% weight)
+        keyword_overlap = 0
+        if question_words:
+            keyword_overlap = len(question_words.intersection(content_words)) / len(question_words)
+        
+        # 2. Contextual relevance (40% weight) - Does this content make sense for the question?
+        contextual_score = 0
+        
+        # Check for humanitarian AI context
+        if any(term in content.lower() for term in ['humanitarian', 'aid', 'crisis', 'emergency', 'development']):
+            contextual_score += 0.25
+        
+        if any(term in content.lower() for term in ['artificial intelligence', 'machine learning', 'ai', 'algorithm', 'data']):
+            contextual_score += 0.25
+        
+        # Check for practical guidance indicators (most important)
+        if any(term in content.lower() for term in ['best practice', 'guideline', 'recommendation', 'framework', 'approach', 'method']):
+            contextual_score += 0.3
+        
+        # Check for specific implementation content
+        if any(term in content.lower() for term in ['implementation', 'deploy', 'collect', 'ensure', 'process', 'manage']):
+            contextual_score += 0.2
+        
+        # Combine scores (keyword relevance is most important)
+        final_score = (keyword_overlap * 0.6) + (contextual_score * 0.4)
+        
+        return min(final_score, 1.0)  # Cap at 1.0
+
+    def _evaluate_and_filter_sources(
+        self,
+        sources: List[Dict[str, Any]],
+        question_text: str,
+        min_relevance_score: float = 0.7,
+        max_sources: int = 2
+    ) -> List[Dict[str, Any]]:
+        """Evaluate source relevance based purely on content"""
+        
+        scored_sources = []
+        
+        for source in sources:
+            content = source.get('content', '')
+            
+            # Calculate relevance score based only on content
+            relevance_score = self._calculate_relevance_score(
+                question_text=question_text,
+                content=content
+            )
+            
+            # Only include sources above threshold
+            if relevance_score >= min_relevance_score:
+                source['relevance_score'] = relevance_score
+                scored_sources.append(source)
+        
+        # Sort by relevance score and return top sources
+        scored_sources.sort(key=lambda x: x['relevance_score'], reverse=True)
+        
+        return scored_sources[:max_sources]
+
     async def get_ethical_considerations_for_project(
         self, 
         project_description: str, 
@@ -1254,4 +1434,4 @@ class RAGService:
         if not filename or not source_location:
             return ""
         
-        return f"https://storage.googleapis.com/{source_location}/{filename}"
+        return f"https://storage.googleapis.com/{source_location}{filename}"

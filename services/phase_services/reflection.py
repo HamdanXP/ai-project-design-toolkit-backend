@@ -1,6 +1,6 @@
 from typing import Dict, Any, List
 from core.llm_service import llm_service
-from models.project import EthicalAssessment
+from models.project import EthicalAssessment, GuidanceSource, ReflectionQuestion
 import services.project_service as project_service
 import json
 import logging
@@ -275,7 +275,123 @@ class ReflectionService:
                 "threshold_met": False,
                 "can_proceed": False
             }
-    
+
+    async def get_reflection_questions_with_guidance(self, project_description: str) -> Dict[str, Any]:
+        """Generate contextual reflection questions with targeted guidance sources"""
+        
+        # First, get the base questions as before
+        questions_data = await self.get_reflection_questions(project_description)
+        
+        # Now get targeted guidance sources for each specific question
+        questions_with_guidance = {}
+        
+        for question_key, question_text in questions_data.items():
+            try:
+                logger.info(f"Getting guidance for question: {question_text[:50]}...")
+                
+                # Get guidance sources for this specific question text
+                guidance_sources = await ctx.rag_service.get_question_specific_guidance_sources(
+                    question_text=question_text,
+                    question_area=question_key,
+                    project_description=project_description,
+                    max_sources=2  # Only get the 2 most relevant sources
+                )
+                
+                questions_with_guidance[question_key] = {
+                    "question": question_text,
+                    "guidance_sources": guidance_sources
+                }
+                
+                logger.info(f"Found {len(guidance_sources)} relevant guidance sources for {question_key}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to get guidance for {question_key}: {e}")
+                # Fallback without guidance
+                questions_with_guidance[question_key] = {
+                    "question": question_text,
+                    "guidance_sources": []
+                }
+        
+        return questions_with_guidance
+
+    async def get_or_create_reflection_questions_with_guidance(self, project_id: str) -> Dict[str, Any]:
+        """Get existing reflection questions with guidance or generate new ones"""
+        try:
+            project = await project_service.ProjectService().get_project(project_id)
+            if not project:
+                raise ValueError("Project not found")
+            
+            # Check if we have enhanced questions with guidance stored
+            if project.reflection_questions_with_guidance:
+                # Convert stored EnhancedReflectionQuestion objects back to dict format for API
+                return {
+                    "questions": {
+                        key: {
+                            "question": enhanced_q.question,
+                            "guidance_sources": [source.dict() for source in enhanced_q.guidance_sources]
+                        }
+                        for key, enhanced_q in project.reflection_questions_with_guidance.items()
+                    },
+                    "has_guidance": True
+                }
+            
+            # Generate new questions with targeted guidance if none exist
+            logger.info(f"Generating new reflection questions with guidance for project {project_id}")
+            questions_with_guidance_raw = await self.get_reflection_questions_with_guidance(project.description)
+            
+            # Convert to proper model format for storage
+            enhanced_questions = {}
+            simple_questions = {}
+            
+            for key, data in questions_with_guidance_raw.items():
+                # Create GuidanceSource objects only for relevant sources
+                guidance_sources = []
+                for source_data in data.get("guidance_sources", []):
+                    try:
+                        guidance_sources.append(GuidanceSource(**source_data))
+                    except Exception as e:
+                        logger.warning(f"Failed to create GuidanceSource: {e}")
+                        continue
+                
+                # Create EnhancedReflectionQuestion object
+                enhanced_questions[key] = ReflectionQuestion(
+                    question=data["question"],
+                    guidance_sources=guidance_sources
+                )
+                
+                # Maintain backward compatibility
+                simple_questions[key] = data["question"]
+            
+            # Save to project
+            project.reflection_questions_with_guidance = enhanced_questions
+            project.reflection_questions = simple_questions
+            project.touch()
+            await project.save()
+            
+            logger.info(f"Saved {len(enhanced_questions)} questions with guidance for project {project_id}")
+            
+            # Return format expected by frontend
+            return {
+                "questions": questions_with_guidance_raw,
+                "has_guidance": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get/create reflection questions with guidance: {e}")
+            # Fallback to simple questions without guidance
+            try:
+                simple_questions = await self.get_or_create_reflection_questions(project_id)
+                return {
+                    "questions": {
+                        key: {"question": question, "guidance_sources": []}
+                        for key, question in simple_questions.items()
+                    },
+                    "has_guidance": False
+                }
+            except Exception as fallback_error:
+                logger.error(f"Fallback also failed: {fallback_error}")
+                raise
+
     def _get_default_question(self, question_type: str) -> str:
         """Get default question text for a given type"""
         defaults = {

@@ -15,19 +15,40 @@ def get_reflection_service() -> ReflectionService:
 def get_project_service() -> ProjectService:
     return ProjectService()
 
-@router.get("/{project_id}/questions", response_model=APIResponse[Dict[str, str]])
+@router.get("/{project_id}/questions", response_model=APIResponse[Dict[str, Any]])
 async def get_reflection_questions(
     project_id: str,
+    include_guidance: bool = True,  # Parameter to include guidance sources
     reflection_service: ReflectionService = Depends(get_reflection_service)
 ):
-    """Get cached reflection questions for a project"""
+    """Get reflection questions for a project, optionally with guidance sources"""
     try:
-        questions_dict = await reflection_service.get_or_create_reflection_questions(project_id)
-        
-        return APIResponse(
-            data=questions_dict,
-            message="Reflection questions retrieved successfully"
-        )
+        if include_guidance:
+            questions_data = await reflection_service.get_or_create_reflection_questions_with_guidance(project_id)
+            
+            return APIResponse(
+                data=questions_data,
+                message="Reflection questions with guidance retrieved successfully"
+            )
+        else:
+            # Backward compatibility - return simple questions format
+            questions_dict = await reflection_service.get_or_create_reflection_questions(project_id)
+            
+            return APIResponse(
+                data={
+                    "questions": {
+                        key: {"question": question, "guidance_sources": []}
+                        for key, question in questions_dict.items()
+                    },
+                    "has_guidance": False
+                },
+                message="Reflection questions retrieved successfully"
+            )
+            
+    except ValueError as e:
+        # Handle "Project not found" specifically
+        logger.error(f"Project {project_id} not found: {e}")
+        raise HTTPException(status_code=404, detail="Project not found")
     except HTTPException:
         raise
     except Exception as e:
