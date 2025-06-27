@@ -34,13 +34,53 @@ class QualitySufficiencyResponse(str, Enum):
     BORDERLINE = "borderline"
     INSUFFICIENT = "insufficient"
 
+class AIRecommendation(str, Enum):
+    HIGHLY_APPROPRIATE = "highly_appropriate"
+    APPROPRIATE = "appropriate"
+    QUESTIONABLE = "questionable"
+    NOT_APPROPRIATE = "not_appropriate"
+
+class QuestionFlagCategory(str, Enum):
+    ETHICAL = "ethical"
+    APPROPRIATENESS = "appropriateness"
+
+class AlternativeSolutions(BaseModel):
+    digital_alternatives: List[str] = []
+    process_improvements: List[str] = []
+    non_digital_solutions: List[str] = []
+    hybrid_approaches: List[str] = []
+    reasoning: str = ""
+
+class QuestionFlag(BaseModel):
+    question_key: str
+    issue: str
+    severity: str  # low, medium, high
+    category: QuestionFlagCategory
+
+class ProjectReadinessAssessment(BaseModel):
+    # Ethical assessment fields
+    ethical_score: float = Field(..., ge=0, le=1)
+    ethical_summary: str = ""
+    
+    # AI appropriateness assessment fields
+    ai_appropriateness_score: float = Field(..., ge=0, le=1)
+    ai_appropriateness_summary: str = ""
+    ai_recommendation: AIRecommendation = AIRecommendation.APPROPRIATE
+    alternative_solutions: Optional[AlternativeSolutions] = None
+    
+    # Combined assessment
+    overall_readiness_score: float = Field(..., ge=0, le=1)
+    proceed_recommendation: bool = False
+    summary: str = ""
+    actionable_recommendations: List[str] = []
+    question_flags: List[QuestionFlag] = []
+    threshold_met: bool = False
 
 class EthicalAssessment(BaseModel):
     score: float = Field(..., ge=0, le=1)
     concerns: List[str] = []
     recommendations: List[str] = []
     approved: bool = False
-
 
 class UseCase(BaseModel):
     id: str
@@ -52,7 +92,6 @@ class UseCase(BaseModel):
     similarity_score: Optional[float] = None
     tags: List[str] = []
 
-
 class Dataset(BaseModel):
     name: str
     source: str
@@ -62,7 +101,6 @@ class Dataset(BaseModel):
     data_types: List[str] = []
     ethical_concerns: List[str] = []
     suitability_score: Optional[float] = None
-
 
 class DeploymentEnvironment(BaseModel):
     # Resources & Budget
@@ -164,7 +202,9 @@ class Project(Document):
     evaluation_data: Optional[Dict[str, Any]] = None
     
     # Core Assessments
-    ethical_assessment: Optional[EthicalAssessment] = None
+    project_readiness_assessment: Optional[ProjectReadinessAssessment] = None
+    ethical_assessment: Optional[EthicalAssessment] = None  # Keep for backward compatibility
+    
     data_suitability_assessment: Optional[DataSuitabilityAssessment] = None
     selected_use_case: Optional[UseCase] = None
     selected_dataset: Optional[Dataset] = None

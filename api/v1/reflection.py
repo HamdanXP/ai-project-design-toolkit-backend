@@ -55,6 +55,7 @@ async def get_reflection_questions(
         logger.error(f"Failed to get reflection questions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/{project_id}/complete", response_model=APIResponse[Dict[str, Any]])
 async def complete_reflection_phase(
     project_id: str,
@@ -62,7 +63,7 @@ async def complete_reflection_phase(
     project_service: ProjectService = Depends(get_project_service),
     reflection_service: ReflectionService = Depends(get_reflection_service)
 ):
-    """Analyze responses and complete reflection phase"""
+    """Analyze responses and complete reflection phase with comprehensive project readiness assessment"""
     try:
         project = await project_service.get_project(project_id)
         if not project:
@@ -71,41 +72,57 @@ async def complete_reflection_phase(
         # Get the questions for this project
         questions = project.reflection_questions or {}
         
-        # Create comprehensive ethical assessment
-        assessment_result = await reflection_service.create_comprehensive_ethical_assessment(
+        # Create comprehensive project readiness assessment (combines ethical + AI appropriateness)
+        assessment_result = await reflection_service.create_comprehensive_project_readiness_assessment(
             answers, project.description, questions
         )
         
-        # Save reflection data with the assessment
+        # Save reflection data with the comprehensive assessment
         reflection_data = {
             "answers": answers,
             "questions": questions,  # Store questions used
             "ethical_score": assessment_result["ethical_score"],
+            "ai_appropriateness_score": assessment_result["ai_appropriateness_score"],
+            "overall_readiness_score": assessment_result["overall_readiness_score"],
             "summary": assessment_result["summary"],
             "actionable_recommendations": assessment_result["actionable_recommendations"],
             "question_flags": assessment_result["question_flags"],
             "completed_at": datetime.utcnow().isoformat(),
         }
         
+        # Update project with both assessments
         await project_service.update_project_phase(
             project_id=project_id,
             phase="reflection",
             phase_data=reflection_data,
-            ethical_assessment=assessment_result["ethical_assessment"],
+            project_readiness_assessment=assessment_result["project_readiness_assessment"],
+            ethical_assessment=assessment_result["ethical_assessment"],  # Keep for backward compatibility
             advance_phase=False
         )
         
+        # Return the comprehensive assessment data for frontend
         return APIResponse(
             data={
-                "ethical_score": assessment_result["ethical_score"],
+                # Overall assessment
+                "overall_readiness_score": assessment_result["overall_readiness_score"],
                 "proceed_recommendation": assessment_result["proceed_recommendation"],
                 "summary": assessment_result["summary"],
                 "actionable_recommendations": assessment_result["actionable_recommendations"],
                 "question_flags": assessment_result["question_flags"],
                 "threshold_met": assessment_result["threshold_met"],
-                "can_proceed": assessment_result["threshold_met"]
+                "can_proceed": assessment_result["threshold_met"],
+                
+                # Ethical assessment details
+                "ethical_score": assessment_result["ethical_score"],
+                "ethical_summary": assessment_result.get("ethical_summary", ""),
+                
+                # AI appropriateness assessment details
+                "ai_appropriateness_score": assessment_result["ai_appropriateness_score"],
+                "ai_appropriateness_summary": assessment_result["ai_appropriateness_summary"],
+                "ai_recommendation": assessment_result["ai_recommendation"],
+                "alternative_solutions": assessment_result.get("alternative_solutions"),
             },
-            message="Reflection phase analysis completed"
+            message="Project readiness assessment completed"
         )
     except HTTPException:
         raise

@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from models.project import EthicalConsideration, Project, ProjectStatus, EthicalAssessment, UseCase, Dataset, DataSuitabilityAssessment, DeploymentEnvironment, EvaluationResults
+from models.project import EthicalConsideration, Project, ProjectReadinessAssessment, ProjectStatus, EthicalAssessment, UseCase, Dataset, DataSuitabilityAssessment, DeploymentEnvironment, EvaluationResults
 from core.exceptions import ProjectNotFoundError
 from services.project_analysis_service import ProjectAnalysisService
 from bson import ObjectId
@@ -208,12 +208,12 @@ class ProjectService:
         phase: str,
         phase_data: Dict[str, Any],
         advance_phase: bool = False,
-        ethical_assessment: Optional[EthicalAssessment] = None,
+        project_readiness_assessment: Optional[ProjectReadinessAssessment] = None,  # NEW
+        ethical_assessment: Optional[EthicalAssessment] = None,  # Keep for backward compatibility
         selected_use_case: Optional[UseCase] = None,
         selected_dataset: Optional[Dataset] = None,
         data_suitability_assessment: Optional[DataSuitabilityAssessment] = None,
         deployment_environment: Optional[DeploymentEnvironment] = None,
-        # REMOVED: model_configuration parameter
         evaluation_results: Optional[EvaluationResults] = None
     ):
         """Update project phase data and advance phase if needed"""
@@ -232,7 +232,11 @@ class ProjectService:
             elif phase == "evaluation":
                 project.evaluation_data = phase_data
             
-            # Update core assessments if provided
+            # NEW: Update comprehensive project readiness assessment
+            if project_readiness_assessment:
+                project.project_readiness_assessment = project_readiness_assessment
+            
+            # Update core assessments if provided (keep existing functionality)
             if ethical_assessment:
                 project.ethical_assessment = ethical_assessment
             
@@ -247,8 +251,6 @@ class ProjectService:
                 
             if deployment_environment:
                 project.deployment_environment = deployment_environment
-                
-            # REMOVED: model_configuration handling
                 
             if evaluation_results:
                 project.evaluation_results = evaluation_results
@@ -268,7 +270,7 @@ class ProjectService:
         except Exception as e:
             logger.error(f"Failed to update project phase: {e}")
             raise
-    
+
     async def delete_project(self, project_id: str) -> bool:
         """Delete project"""
         try:
