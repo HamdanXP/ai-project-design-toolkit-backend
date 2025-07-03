@@ -19,9 +19,15 @@ logger = logging.getLogger(__name__)
 
 class ReflectionService:
     def __init__(self):
+        # Humanitarian-focused thresholds
         self.ethical_threshold = 0.7
-        self.ai_appropriateness_threshold = 0.6
-        self.overall_threshold = 0.65
+        self.ai_appropriateness_threshold = 0.7
+        self.overall_threshold = 0.7
+        
+        # Weights for humanitarian context
+        self.ethical_weight = 0.7
+        self.ai_appropriateness_weight = 0.3
+
         # Core questions that are always relevant
         self.core_questions = [
             "problem_definition",
@@ -158,311 +164,359 @@ class ReflectionService:
         project_description: str,
         questions: Dict[str, str]
     ) -> Dict[str, Any]:
-        """Create comprehensive project readiness assessment combining ethical and AI appropriateness evaluation"""
-
+        """
+        Completely rewritten assessment method with cleaner, more focused approach
+        """
+        
         # Get context from knowledge base
         context = await ctx.rag_service.get_context_for_reflection(project_description)
         
-        # Build questions and answers context
-        qa_context = ""
+        # Build clean Q&A context
+        qa_context = self._build_qa_context(answers, questions)
+        
+        # STEP 1: Single, focused assessment
+        assessment_data = await self._perform_core_assessment(
+            project_description, qa_context, context
+        )
+        
+        # STEP 2: Generate alternatives if needed
+        alternatives = await self._generate_alternatives_if_needed(
+            project_description, qa_context, assessment_data["ai_recommendation"]
+        )
+        
+        # STEP 3: Intelligent post-processing
+        final_assessment = self._finalize_assessment(assessment_data, alternatives, answers, questions)
+        
+        # STEP 4: Create response objects
+        return self._create_response_objects(final_assessment)
+
+    def _build_qa_context(self, answers: Dict[str, str], questions: Dict[str, str]) -> str:
+        """Build clean Q&A context string"""
+        qa_pairs = []
         for key, answer in answers.items():
-            if key in questions:
-                qa_context += f"Q: {questions[key]}\nA: {answer}\n\n"
+            if key in questions and answer.strip():
+                qa_pairs.append(f"Q: {questions[key]}\nA: {answer.strip()}")
+        return "\n\n".join(qa_pairs)
+
+    async def _perform_core_assessment(
+        self, 
+        project_description: str, 
+        qa_context: str, 
+        context: str
+    ) -> Dict[str, Any]:
+        """
+        Single, focused assessment prompt - much cleaner and more reliable
+        """
         
         prompt = f"""
-        Context from humanitarian AI best practices:
-        {context}
+        You are evaluating a humanitarian AI project. Assess both ethical readiness and AI appropriateness.
 
-        You are evaluating a humanitarian AI project for both ETHICAL READINESS and AI APPROPRIATENESS.
-        
-        Project: {project_description}
-        
-        Questions and Responses:
+        HUMANITARIAN CONTEXT: {context}
+
+        PROJECT: {project_description}
+
+        RESPONSES:
         {qa_context}
-        
-        EVALUATION FRAMEWORK:
-        
-        1. ETHICAL ASSESSMENT (Score 0-1):
-        - Potential harm to beneficiaries and mitigation strategies
-        - Cultural sensitivity and community involvement
-        - Privacy, consent, and data protection measures
-        - Transparency and accountability mechanisms
-        - Bias prevention and fairness considerations
-        
-        2. AI APPROPRIATENESS ASSESSMENT (Score 0-1):
-        - Does this problem genuinely benefit from AI over simpler solutions?
-        - Is the technical complexity justified by the expected benefits?
-        - Are there sufficient data and resources for AI implementation?
-        - Could simpler digital or non-digital solutions be more effective?
-        - Is the team prepared for AI development and deployment?
-        
-        CRITICAL SCORING GUIDELINES:
-        - Gibberish, nonsensical, or extremely vague answers should receive 0.0-0.3 scores
-        - Answers that completely avoid questions should be scored 0.1-0.3
-        - Superficial answers without substance should be scored 0.3-0.5
-        - Good answers with minor issues should be scored 0.6-0.8
-        - Excellent, comprehensive answers should be scored 0.8-1.0
-        
-        ALTERNATIVE SOLUTIONS:
-        If AI appropriateness score is below 0.6, suggest specific alternatives:
-        - Digital alternatives (apps, databases, web platforms)
-        - Process improvements (workflows, coordination, training)
-        - Non-digital solutions (manual processes, community approaches)
-        - Hybrid approaches (AI-assisted rather than AI-driven)
-        
-        IMPORTANT: Return ONLY valid JSON in the exact format below. No additional text, markdown, or explanations.
-        
-        Return JSON in this exact format:
+
+        ASSESSMENT CRITERIA:
+
+        1. ETHICAL READINESS (0.0-1.0):
+        - Understanding of potential harm to beneficiaries
+        - Community involvement and cultural sensitivity
+        - Privacy, consent, and data protection awareness
+        - Transparency and accountability considerations
+        - Bias prevention and fairness awareness
+
+        2. AI APPROPRIATENESS (0.0-1.0):
+        - Is AI genuinely needed vs simpler solutions?
+        - Technical complexity justified by benefits?
+        - Sufficient data and resources available?
+        - Team prepared for AI implementation?
+
+        SCORING (be realistic for humanitarian context):
+        - 0.0-0.4: Poor (major gaps, vague responses, little understanding)
+        - 0.5-0.6: Fair (basic understanding, some gaps, needs improvement) 
+        - 0.7-0.8: Good (solid understanding, minor gaps, ready with support)
+        - 0.9-1.0: Excellent (comprehensive, well-informed, clearly ready)
+
+        RETURN JSON (no markdown, no extra text):
         {{
-            "ethical_score": 0.75,
-            "ethical_summary": "Brief assessment of ethical readiness",
-            "ai_appropriateness_score": 0.65,
-            "ai_appropriateness_summary": "Brief assessment of AI suitability for this problem",
+            "ethical_score": 0.0,
+            "ethical_summary": "Specific assessment of ethical readiness based on responses",
+            "ai_appropriateness_score": 0.0,
+            "ai_appropriateness_summary": "Specific assessment of AI necessity and feasibility",
             "ai_recommendation": "highly_appropriate|appropriate|questionable|not_appropriate",
-            "alternative_solutions": {{
-                "digital_alternatives": ["Specific alternative 1", "Alternative 2"],
-                "process_improvements": ["Process improvement 1"],
-                "non_digital_solutions": ["Manual approach 1"],
-                "hybrid_approaches": ["AI-assisted approach 1"],
-                "reasoning": "Why these alternatives might be better"
-            }},
-            "overall_readiness_score": 0.70,
-            "proceed_recommendation": true,
-            "summary": "Combined assessment of project readiness",
-            "actionable_recommendations": [
-                "Specific action for ethical concerns",
-                "Specific action for AI appropriateness",
-                "Combined recommendation"
+            "overall_summary": "Combined assessment of project readiness",
+            "key_concerns": [
+                "Specific concern 1",
+                "Specific concern 2"
             ],
-            "question_flags": [
-                {{
-                    "question_key": "question_key_here",
-                    "issue": "Specific issue with this answer",
-                    "severity": "high|medium|low",
-                    "category": "ethical|appropriateness"
-                }}
+            "actionable_next_steps": [
+                "Specific actionable step 1",
+                "Specific actionable step 2", 
+                "Specific actionable step 3"
             ]
         }}
         """
         
-        response = ""  # Initialize response variable
         try:
-            logger.info(f"Starting project readiness assessment for project: {project_description[:100]}...")
-            logger.info(f"Number of answers provided: {len(answers)}")
-            
             response = await llm_service.analyze_text("", prompt)
+            cleaned_response = self._clean_json_response(response)
+            return json.loads(cleaned_response)
             
-            # Add logging to see what we actually received
-            logger.info(f"LLM response received (first 200 chars): {response[:200]}")
+        except Exception as e:
+            logger.error(f"Core assessment failed: {e}")
+            # Return minimal valid structure rather than failing completely
+            return {
+                "ethical_score": 0.3,
+                "ethical_summary": "Assessment failed - please review responses",
+                "ai_appropriateness_score": 0.3,
+                "ai_appropriateness_summary": "Assessment failed - unable to evaluate AI appropriateness",
+                "ai_recommendation": "questionable",
+                "overall_summary": "Assessment could not be completed due to technical issues",
+                "key_concerns": ["Assessment system temporarily unavailable"],
+                "actionable_next_steps": ["Please try again", "Ensure all questions are answered thoroughly"]
+            }
+
+    async def _generate_alternatives_if_needed(
+        self, 
+        project_description: str, 
+        qa_context: str, 
+        ai_recommendation: str
+    ) -> Dict[str, Any] | None:
+        """
+        Generate alternatives only when AI is questionable or not appropriate
+        """
+        
+        if ai_recommendation not in ["questionable", "not_appropriate"]:
+            return None
             
-            # Clean the response - remove markdown formatting if present
-            cleaned_response = response.strip()
-            
-            # Remove markdown code blocks if present
-            if cleaned_response.startswith('```json'):
-                cleaned_response = cleaned_response[7:]
-            elif cleaned_response.startswith('```'):
-                cleaned_response = cleaned_response[3:]
+        prompt = f"""
+        Generate specific alternatives for this humanitarian project since AI may not be appropriate.
+
+        PROJECT: {project_description}
+
+        USER RESPONSES: {qa_context}
+
+        Provide specific, actionable alternatives relevant to this exact project context.
+        Make suggestions concrete and implementable.
+
+        RETURN JSON:
+        {{
+            "digital_alternatives": ["Specific digital solution for this project"],
+            "process_improvements": ["Specific process improvement"],
+            "non_digital_solutions": ["Specific manual/community approach"],
+            "hybrid_approaches": ["Specific AI-assisted approach"],
+            "reasoning": "Why these alternatives are better for this humanitarian context"
+        }}
+        """
+        
+        try:
+            response = await llm_service.analyze_text("", prompt)
+            cleaned_response = self._clean_json_response(response)
+            return json.loads(cleaned_response)
+        except Exception as e:
+            logger.warning(f"Alternative generation failed: {e}")
+            return None
+
+    def _finalize_assessment(
+        self, 
+        assessment_data: Dict[str, Any], 
+        alternatives: Dict[str, Any] | None,
+        answers: Dict[str, str],
+        questions: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """
+        Intelligent post-processing and finalization
+        """
+        
+        ethical_score = float(assessment_data.get("ethical_score", 0.0))
+        ai_appropriateness_score = float(assessment_data.get("ai_appropriateness_score", 0.0))
+        
+        # Calculate weighted overall score
+        overall_score = (ethical_score * self.ethical_weight) + (ai_appropriateness_score * self.ai_appropriateness_weight)
+        
+        # Determine proceed recommendation based on realistic thresholds
+        proceed_recommendation = (
+            ethical_score >= self.ethical_threshold and
+            ai_appropriateness_score >= self.ai_appropriateness_threshold and
+            overall_score >= self.overall_threshold
+        )
+        
+        # Generate question flags based on answer quality
+        question_flags = self._analyze_answer_quality(answers, questions, assessment_data.get("key_concerns", []))
+        
+        # Create final assessment structure
+        final_assessment = {
+            "ethical_score": ethical_score,
+            "ethical_summary": assessment_data.get("ethical_summary", ""),
+            "ai_appropriateness_score": ai_appropriateness_score,
+            "ai_appropriateness_summary": assessment_data.get("ai_appropriateness_summary", ""),
+            "ai_recommendation": assessment_data.get("ai_recommendation", "appropriate"),
+            "alternative_solutions": alternatives,
+            "overall_readiness_score": overall_score,
+            "proceed_recommendation": proceed_recommendation,
+            "summary": assessment_data.get("overall_summary", ""),
+            "actionable_recommendations": assessment_data.get("actionable_next_steps", []),
+            "question_flags": question_flags,
+            "threshold_met": overall_score >= self.overall_threshold
+        }
+        
+        logger.info(f"Final assessment: ethical={ethical_score:.2f}, ai_app={ai_appropriateness_score:.2f}, overall={overall_score:.2f}, proceed={proceed_recommendation}")
+        
+        return final_assessment
+
+    def _analyze_answer_quality(
+        self, 
+        answers: Dict[str, str], 
+        questions: Dict[str, str],
+        key_concerns: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyze answer quality to generate question flags
+        """
+        flags = []
+        
+        for key, answer in answers.items():
+            if key not in questions:
+                continue
                 
-            if cleaned_response.endswith('```'):
-                cleaned_response = cleaned_response[:-3]
+            answer = answer.strip()
             
-            # Remove any leading/trailing whitespace again
-            cleaned_response = cleaned_response.strip()
+            # Flag very short answers
+            if len(answer) < 100:
+                flags.append({
+                    "question_key": key,
+                    "issue": "Response is too brief and lacks sufficient detail for this humanitarian context",
+                    "severity": "medium",
+                    "category": "ethical"
+                })
             
-            # Check if we have any content to parse
-            if not cleaned_response:
-                logger.error("Empty response from LLM after cleaning")
-                raise ValueError("Empty response from LLM")
+            # Flag answers that seem to avoid the question
+            question_lower = questions[key].lower()
+            answer_lower = answer.lower()
             
-            # Add logging to see what we're trying to parse
-            logger.info(f"Cleaned response to parse (first 200 chars): {cleaned_response[:200]}")
+            # Check for key humanitarian terms based on question type
+            if "harm" in question_lower or "risk" in question_lower or "negative" in question_lower:
+                if not any(term in answer_lower for term in ["harm", "risk", "negative", "concern", "impact", "effect"]):
+                    flags.append({
+                        "question_key": key,
+                        "issue": "Response does not adequately address potential harms or risks",
+                        "severity": "high",
+                        "category": "ethical"
+                    })
             
-            # Try to parse the JSON
-            assessment_data = json.loads(cleaned_response)
+            if "beneficiar" in question_lower or "who" in question_lower:
+                if not any(term in answer_lower for term in ["people", "community", "beneficiar", "user", "target", "vulnerable"]):
+                    flags.append({
+                        "question_key": key,
+                        "issue": "Response lacks clear identification of beneficiaries or target population",
+                        "severity": "high",
+                        "category": "ethical"
+                    })
             
-            # Validate that required fields are present
-            required_fields = [
-                "ethical_score", "ai_appropriateness_score", "overall_readiness_score",
-                "proceed_recommendation", "summary", "actionable_recommendations"
-            ]
-            
-            for field in required_fields:
-                if field not in assessment_data:
-                    logger.error(f"Missing required field in assessment: {field}")
-                    assessment_data[field] = 0.0 if "score" in field else (False if field == "proceed_recommendation" else ("Assessment incomplete" if field == "summary" else []))
-            
-            logger.info("Successfully parsed assessment data")
-            
-            # Validation and scoring logic
-            ethical_score = assessment_data.get("ethical_score", 0.0)
-            ai_appropriateness_score = assessment_data.get("ai_appropriateness_score", 0.0)
-            
-            # Calculate overall readiness score (weighted average)
-            overall_score = (ethical_score * 0.6) + (ai_appropriateness_score * 0.4)
-            
-            # Additional validation - if most questions are flagged as high severity, force lower scores
-            question_flags = assessment_data.get("question_flags", [])
-            high_severity_count = sum(1 for flag in question_flags if flag.get("severity") == "high")
-            total_questions = len(questions)
-            
-            if high_severity_count >= total_questions * 0.6:  # 60% or more questions flagged as high severity
-                ethical_score = min(ethical_score, 0.4)
-                ai_appropriateness_score = min(ai_appropriateness_score, 0.4)
-                overall_score = min(overall_score, 0.3)
-                assessment_data["proceed_recommendation"] = False
-                
-            if high_severity_count >= total_questions * 0.8:  # 80% or more questions flagged
-                ethical_score = min(ethical_score, 0.3)
-                ai_appropriateness_score = min(ai_appropriateness_score, 0.3)
-                overall_score = min(overall_score, 0.2)
-                
-            if high_severity_count == total_questions:  # All questions flagged
-                ethical_score = min(ethical_score, 0.2)
-                ai_appropriateness_score = min(ai_appropriateness_score, 0.2)
-                overall_score = min(overall_score, 0.15)
-            
-            # Convert question flags to proper format
-            converted_flags = []
-            for flag in question_flags:
+            # Flag based on key concerns from LLM assessment
+            for concern in key_concerns:
+                if any(term in concern.lower() for term in [key.replace("_", " "), questions[key][:20].lower()]):
+                    flags.append({
+                        "question_key": key,
+                        "issue": concern,
+                        "severity": "medium",
+                        "category": "ethical"
+                    })
+        
+        return flags
+
+    def _clean_json_response(self, response: str) -> str:
+        """Clean and extract JSON from LLM response"""
+        response = response.strip()
+        
+        # Remove markdown formatting
+        if response.startswith('```json'):
+            response = response[7:]
+        elif response.startswith('```'):
+            response = response[3:]
+        if response.endswith('```'):
+            response = response[:-3]
+        
+        # Extract JSON object
+        first_brace = response.find('{')
+        last_brace = response.rfind('}')
+        
+        if first_brace != -1 and last_brace != -1:
+            response = response[first_brace:last_brace + 1]
+        
+        return response.strip()
+
+    def _create_response_objects(self, final_assessment: Dict[str, Any]) -> Dict[str, Any]:
+        """Create final response objects for the API"""
+        
+        # Convert question flags to proper objects
+        converted_flags = []
+        for flag in final_assessment["question_flags"]:
+            try:
                 converted_flags.append(QuestionFlag(
                     question_key=flag.get("question_key", ""),
                     issue=flag.get("issue", ""),
                     severity=flag.get("severity", "medium"),
                     category=QuestionFlagCategory(flag.get("category", "ethical"))
                 ))
-            
-            # Handle alternative solutions
-            alt_solutions = assessment_data.get("alternative_solutions")
-            alternative_solutions = None
-            if alt_solutions:
-                alternative_solutions = AlternativeSolutions(
-                    digital_alternatives=alt_solutions.get("digital_alternatives", []),
-                    process_improvements=alt_solutions.get("process_improvements", []),
-                    non_digital_solutions=alt_solutions.get("non_digital_solutions", []),
-                    hybrid_approaches=alt_solutions.get("hybrid_approaches", []),
-                    reasoning=alt_solutions.get("reasoning", "")
-                )
-            
-            # Create the ProjectReadinessAssessment object
-            project_readiness_assessment = ProjectReadinessAssessment(
-                ethical_score=ethical_score,
-                ethical_summary=assessment_data.get("ethical_summary", ""),
-                ai_appropriateness_score=ai_appropriateness_score,
-                ai_appropriateness_summary=assessment_data.get("ai_appropriateness_summary", ""),
-                ai_recommendation=AIRecommendation(assessment_data.get("ai_recommendation", "appropriate")),
-                alternative_solutions=alternative_solutions,
-                overall_readiness_score=overall_score,
-                proceed_recommendation=assessment_data.get("proceed_recommendation", False),
-                summary=assessment_data.get("summary", ""),
-                actionable_recommendations=assessment_data.get("actionable_recommendations", []),
-                question_flags=converted_flags,
-                threshold_met=overall_score >= self.overall_threshold
-            )
-            
-            # Also create legacy EthicalAssessment for backward compatibility
-            ethical_assessment = EthicalAssessment(
-                score=ethical_score,
-                concerns=[],  # No longer using separate concerns
-                recommendations=assessment_data.get("actionable_recommendations", []),
-                approved=ethical_score >= self.ethical_threshold
-            )
-            
-            # Return data for frontend
-            return {
-                "project_readiness_assessment": project_readiness_assessment,
-                "ethical_assessment": ethical_assessment,  # For backward compatibility
-                "ethical_score": ethical_score,
-                "ai_appropriateness_score": ai_appropriateness_score,
-                "ai_appropriateness_summary": assessment_data.get("ai_appropriateness_summary", ""),
-                "ai_recommendation": assessment_data.get("ai_recommendation", "appropriate"),
-                "alternative_solutions": assessment_data.get("alternative_solutions"),
-                "overall_readiness_score": overall_score,
-                "proceed_recommendation": assessment_data.get("proceed_recommendation", False),
-                "summary": assessment_data.get("summary", ""),
-                "actionable_recommendations": assessment_data.get("actionable_recommendations", []),
-                "question_flags": question_flags,  # Return original format for frontend
-                "threshold_met": overall_score >= self.overall_threshold,
-                "can_proceed": overall_score >= self.overall_threshold
-            }
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            logger.error(f"Raw response: {response}")
-            
-            # Try to extract JSON from the response if it's embedded in text
-            import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                try:
-                    logger.info("Attempting to parse extracted JSON")
-                    assessment_data = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse extracted JSON as well")
-                    raise ValueError("Could not parse LLM response as JSON")
-            else:
-                logger.error("No JSON found in response")
-                raise ValueError("No JSON found in LLM response")
-                
-        except Exception as e:
-            logger.error(f"Failed to create project readiness assessment: {e}")
-            if response:
-                logger.error(f"Full response that failed to parse: {response}")
-            else:
-                logger.error("No response received from LLM")
-            
-            # Create fallback assessment
-            fallback_ethical = EthicalAssessment(
-                score=0.0,
-                concerns=[],
-                recommendations=["Complete all reflection questions with detailed, thoughtful responses", "Consult with ethics experts"],
-                approved=False
-            )
-            
-            fallback_readiness = ProjectReadinessAssessment(
-                ethical_score=0.0,
-                ethical_summary="Assessment failed - please review your responses and try again",
-                ai_appropriateness_score=0.0,
-                ai_appropriateness_summary="Could not evaluate AI appropriateness due to assessment failure",
-                ai_recommendation=AIRecommendation.QUESTIONABLE,
-                overall_readiness_score=0.0,
-                proceed_recommendation=False,
-                summary="Assessment failed - please ensure all questions are answered with detailed, thoughtful responses",
-                actionable_recommendations=["Provide detailed, thoughtful answers to all reflection questions", "Ensure responses directly address the questions asked"],
-                question_flags=[],
-                threshold_met=False
-            )
-            
-            return {
-                "project_readiness_assessment": fallback_readiness,
-                "ethical_assessment": fallback_ethical,
-                "ethical_score": 0.0,
-                "ai_appropriateness_score": 0.0,
-                "ai_appropriateness_summary": "Could not evaluate AI appropriateness due to assessment failure",
-                "ai_recommendation": "questionable",
-                "alternative_solutions": None,
-                "overall_readiness_score": 0.0,
-                "proceed_recommendation": False,
-                "summary": "Assessment failed - please ensure all questions are answered with detailed, thoughtful responses",
-                "actionable_recommendations": ["Provide detailed, thoughtful answers to all reflection questions", "Ensure responses directly address the questions asked"],
-                "question_flags": [],
-                "threshold_met": False,
-                "can_proceed": False
-            }
+            except Exception as e:
+                logger.warning(f"Failed to convert question flag: {e}")
 
-    # Keep the old method name for backward compatibility, but redirect to new method
-    async def create_comprehensive_ethical_assessment(
-        self, 
-        answers: Dict[str, str], 
-        project_description: str,
-        questions: Dict[str, str]
-    ) -> Dict[str, Any]:
-        """Legacy method - redirects to new comprehensive assessment"""
-        return await self.create_comprehensive_project_readiness_assessment(
-            answers, project_description, questions
+        # Convert alternative solutions if present
+        alt_solutions_obj = None
+        if final_assessment["alternative_solutions"]:
+            alt_data = final_assessment["alternative_solutions"]
+            alt_solutions_obj = AlternativeSolutions(
+                digital_alternatives=alt_data.get("digital_alternatives", []),
+                process_improvements=alt_data.get("process_improvements", []),
+                non_digital_solutions=alt_data.get("non_digital_solutions", []),
+                hybrid_approaches=alt_data.get("hybrid_approaches", []),
+                reasoning=alt_data.get("reasoning", "")
+            )
+
+        # Create ProjectReadinessAssessment object
+        project_readiness_assessment = ProjectReadinessAssessment(
+            ethical_score=final_assessment["ethical_score"],
+            ethical_summary=final_assessment["ethical_summary"],
+            ai_appropriateness_score=final_assessment["ai_appropriateness_score"],
+            ai_appropriateness_summary=final_assessment["ai_appropriateness_summary"],
+            ai_recommendation=AIRecommendation(final_assessment["ai_recommendation"]),
+            alternative_solutions=alt_solutions_obj,
+            overall_readiness_score=final_assessment["overall_readiness_score"],
+            proceed_recommendation=final_assessment["proceed_recommendation"],
+            summary=final_assessment["summary"],
+            actionable_recommendations=final_assessment["actionable_recommendations"],
+            question_flags=converted_flags,
+            threshold_met=final_assessment["threshold_met"]
         )
 
-    # ... [Rest of the existing methods remain unchanged] ...
+        # Create legacy EthicalAssessment for backward compatibility
+        ethical_assessment = EthicalAssessment(
+            score=final_assessment["ethical_score"],
+            concerns=[],
+            recommendations=final_assessment["actionable_recommendations"],
+            approved=final_assessment["ethical_score"] >= self.ethical_threshold
+        )
+
+        # Return complete response
+        return {
+            "project_readiness_assessment": project_readiness_assessment,
+            "ethical_assessment": ethical_assessment,
+            "ethical_score": final_assessment["ethical_score"],
+            "ai_appropriateness_score": final_assessment["ai_appropriateness_score"],
+            "ai_appropriateness_summary": final_assessment["ai_appropriateness_summary"],
+            "ai_recommendation": final_assessment["ai_recommendation"],
+            "alternative_solutions": final_assessment["alternative_solutions"],
+            "overall_readiness_score": final_assessment["overall_readiness_score"],
+            "proceed_recommendation": final_assessment["proceed_recommendation"],
+            "summary": final_assessment["summary"],
+            "actionable_recommendations": final_assessment["actionable_recommendations"],
+            "question_flags": final_assessment["question_flags"],
+            "threshold_met": final_assessment["threshold_met"],
+            "can_proceed": final_assessment["threshold_met"]
+        }
     
     async def get_reflection_questions_with_guidance(self, project_description: str) -> Dict[str, Any]:
         """Generate contextual reflection questions with targeted guidance sources"""
