@@ -21,120 +21,58 @@ async def get_similar_use_cases(
     project_service: ProjectService = Depends(get_project_service),
     scoping_service: ScopingService = Depends(get_scoping_service)
 ):
-    """Get AI use cases with enhanced filtering and humanitarian-focused educational content"""
+    """Get AI use cases with educational content"""
     try:
-        # Validate project exists and get domain
+        # Get project
         project = await project_service.get_project(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        # Get stored problem domain
-        problem_domain = await project_service.get_project_domain(project_id)
+        problem_domain = project.problem_domain or "general_humanitarian"
         
-        # Log the request
         logger.info(f"Fetching AI use cases for project {project_id}, domain: {problem_domain}")
-        logger.info(f"Project description: {project.description[:100]}...")
         
-        # Get AI use cases with enhanced filtering and targeted enrichment
+        # Get AI use cases
         try:
             use_cases = await scoping_service.get_educational_use_cases(
                 project.description, 
                 problem_domain
             )
-            logger.info(f"Retrieved and processed {len(use_cases)} AI use cases")
             
-            # Validate and clean use cases (no fallback content)
-            validated_use_cases = []
-            for uc in use_cases:
-                try:
-                    # Basic validation structure
-                    validated_uc = {
-                        "id": uc.get("id", f"uc_{hash(uc.get('title', '')) % 10000}"),
-                        "title": uc.get("title", "Untitled AI Use Case"),
-                        "description": uc.get("description", "No description available"),
-                        "source": uc.get("source", "Unknown"),
-                        "source_url": uc.get("source_url", ""),
-                        "type": uc.get("type", "ai_application"),
-                        "category": uc.get("category", "General"),
-                        
-                        # Educational content - use as-is from enrichment (may be empty)
-                        "how_it_works": uc.get("how_it_works", ""),
-                        "real_world_impact": uc.get("real_world_impact", ""),
-                        "similarity_to_project": uc.get("similarity_to_project", ""),
-                        "real_world_examples": uc.get("real_world_examples", ""),
-                        "implementation_approach": uc.get("implementation_approach", ""),
-                        "decision_guidance": uc.get("decision_guidance", ""),
-                        
-                        # Practical information (may be empty lists)
-                        "key_success_factors": uc.get("key_success_factors", []),
-                        "resource_requirements": uc.get("resource_requirements", []),
-                        "challenges": uc.get("challenges", [])
-                    }
-                    
-                    # Add optional metadata if available
-                    optional_fields = ["authors", "published_date", "organization", "date", "venue", "citation_count"]
-                    for field in optional_fields:
-                        if uc.get(field):
-                            validated_uc[field] = uc[field]
-                    
-                    # Quality check - only include meaningful use cases
-                    if (validated_uc["title"] != "Untitled AI Use Case" and 
-                        len(validated_uc["description"]) > 20):
-                        validated_use_cases.append(validated_uc)
-                    
-                except Exception as uc_error:
-                    logger.warning(f"Failed to validate use case: {uc_error}")
-                    continue
-            
-            # Return results
-            final_use_cases = validated_use_cases[:settings.max_use_cases_returned]
-            
-            if final_use_cases:
-                logger.info(f"Returning {len(final_use_cases)} validated AI use cases")
-                
-                # Count how many have educational content
-                enriched_count = sum(1 for uc in final_use_cases 
-                                   if uc.get("how_it_works") or uc.get("real_world_impact"))
-                
-                if enriched_count > 0:
-                    message = f"Found {len(final_use_cases)} relevant AI use cases for {problem_domain} with humanitarian-focused guidance"
-                else:
-                    message = f"Found {len(final_use_cases)} relevant AI use cases for {problem_domain}. Visit source links for detailed information."
-                
+            if use_cases:
+                logger.info(f"Retrieved {len(use_cases)} AI use cases")
                 return APIResponse(
                     success=True,
-                    data=final_use_cases,
-                    message=message
+                    data=use_cases,
+                    message=f"Found {len(use_cases)} relevant AI use cases from academic sources"
                 )
             else:
-                logger.info("No valid AI use cases found after processing")
+                logger.info("No AI use cases found")
                 return APIResponse(
                     success=True,
                     data=[],
-                    message=f"No suitable AI use cases found for {problem_domain}. Consider exploring general AI principles or consulting with AI experts."
+                    message=f"No suitable AI use cases found for {problem_domain}. You may proceed with general AI principles."
                 )
             
         except Exception as e:
-            logger.error(f"AI use case retrieval and processing failed: {e}")
+            logger.error(f"AI use case retrieval failed: {e}")
             return APIResponse(
                 success=True,
                 data=[],
-                message=f"Unable to retrieve AI use cases for {problem_domain}. You may proceed with general AI development principles."
+                message=f"Unable to retrieve AI use cases. The search service may be temporarily unavailable."
             )
             
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in get_similar_use_cases: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Internal server error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     finally:
         try:
             await session_manager.close_all_sessions()
         except Exception as cleanup_error:
             logger.warning(f"Session cleanup error: {cleanup_error}")
+
 
 @router.post("/{project_id}/datasets", response_model=APIResponse[List[Dataset]])
 async def get_recommended_datasets(
@@ -149,8 +87,8 @@ async def get_recommended_datasets(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        # Get problem domain for better search
-        problem_domain = await project_service.get_project_domain(project_id)
+        # Use the already extracted problem domain from project
+        problem_domain = project.problem_domain or "general_humanitarian"
         
         use_case_id = request_data.get("use_case_id", "")
         use_case_title = request_data.get("use_case_title", "")
@@ -158,13 +96,13 @@ async def get_recommended_datasets(
         
         logger.info(f"Getting datasets for project {project_id}, domain: {problem_domain}, use case: {use_case_title}")
         
-        # Use the updated dataset discovery service with domain
+        # Use the enhanced dataset discovery service
         try:
             datasets = await scoping_service.recommend_datasets(
                 project.description,
                 use_case_title,
                 use_case_description,
-                problem_domain  # Pass the domain
+                problem_domain
             )
             
             logger.info(f"Retrieved {len(datasets)} datasets from humanitarian sources")
@@ -180,7 +118,7 @@ async def get_recommended_datasets(
                 return APIResponse(
                     success=True,
                     data=[],
-                    message=f"No datasets found from humanitarian data sources for {problem_domain}. This is common for specialized AI projects."
+                    message=f"No datasets found from humanitarian data sources for {problem_domain}. This is common for specialized AI projects. Consider collecting your own data or partnering with organizations that have relevant datasets."
                 )
                 
         except Exception as e:
@@ -188,7 +126,7 @@ async def get_recommended_datasets(
             return APIResponse(
                 success=True,
                 data=[],
-                message=f"Dataset search failed for {problem_domain}. No datasets available from humanitarian sources."
+                message=f"Dataset search failed for {problem_domain}. The data discovery service may be temporarily unavailable."
             )
         
     except HTTPException:

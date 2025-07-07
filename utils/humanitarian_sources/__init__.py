@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class HumanitarianDataSources:
     def __init__(self):
         self.max_results_per_source = settings.max_results_per_source
-        self.session_manager = session_manager  # Add reference for use in search service
+        self.session_manager = session_manager
     
     async def _search_with_retry(
         self, 
@@ -22,10 +22,13 @@ class HumanitarianDataSources:
         limit: int, 
         source_name: str
     ) -> List[Dict[str, Any]]:
-        """Execute search with retry logic"""
+        """Execute search with retry logic and deterministic ordering"""
         for attempt in range(settings.request_retry_count + 1):
             try:
                 result = await search_func(query, domain, limit)
+                # Sort results deterministically for consistency
+                if result:
+                    result.sort(key=lambda x: (x.get("title", ""), x.get("source", "")))
                 return result
             except Exception as e:
                 if attempt < settings.request_retry_count:
@@ -38,10 +41,9 @@ class HumanitarianDataSources:
         return []
     
     async def _search_arxiv_safe(self, query: str, domain: str, limit: int) -> List[Dict[str, Any]]:
-        """Search arXiv with optimized single query strategy"""
+        """Search arXiv with deterministic results"""
         results = []
         
-        # Use session manager context
         async with session_manager.get_session() as session:
             try:
                 params = {
@@ -60,7 +62,6 @@ class HumanitarianDataSources:
                         parsed_papers = self._parse_arxiv_xml(xml_content)
                         
                         for paper in parsed_papers:
-                            # More lenient relevance check
                             if self._is_potentially_relevant(paper, domain):
                                 result = {
                                     "title": paper.get("title", "").strip(),
@@ -73,8 +74,9 @@ class HumanitarianDataSources:
                                     "categories": paper.get("categories", [])
                                 }
                                 
-                                # Avoid duplicates by checking titles
-                                if not any(existing.get("title") == result["title"] for existing in results):
+                                # Avoid duplicates by checking normalized titles
+                                normalized_title = self._normalize_title(result["title"])
+                                if not any(self._normalize_title(existing.get("title", "")) == normalized_title for existing in results):
                                     results.append(result)
                                         
                     else:
@@ -83,18 +85,18 @@ class HumanitarianDataSources:
             except Exception as e:
                 logger.warning(f"arXiv search failed: {query} - {e}")
         
+        # Sort deterministically before limiting
+        results.sort(key=lambda x: (x.get("title", ""), x.get("published_date", "")))
         return results[:limit]
 
     async def _search_reliefweb_safe(self, query: str, domain: str, limit: int) -> List[Dict[str, Any]]:
-        """Search ReliefWeb with optimized single query"""
+        """Search ReliefWeb with deterministic results"""
         results = []
         
         base_url = "https://api.reliefweb.int/v1"
         
-        # Use session manager context
         async with session_manager.get_session() as session:
             try:
-                # Use the working parameter format with increased limits
                 params = {
                     "appname": settings.reliefweb_app_name or "humanitarian-ai-toolkit",
                     "query[value]": query,
@@ -123,7 +125,9 @@ class HumanitarianDataSources:
                                     "organization": "ReliefWeb Partners"
                                 }
                                 
-                                if not any(existing.get("title") == result["title"] for existing in results):
+                                # Avoid duplicates using normalized titles
+                                normalized_title = self._normalize_title(result["title"])
+                                if not any(self._normalize_title(existing.get("title", "")) == normalized_title for existing in results):
                                     results.append(result)
                                     
                     else:
@@ -132,13 +136,14 @@ class HumanitarianDataSources:
             except Exception as e:
                 logger.warning(f"ReliefWeb search failed for '{query}': {e}")
         
+        # Sort deterministically before limiting
+        results.sort(key=lambda x: (x.get("title", ""), x.get("organization", "")))
         return results[:limit]
 
     async def _search_hdx_safe(self, query: str, domain: str, limit: int) -> List[Dict[str, Any]]:
-        """Search HDX with optimized single query"""
+        """Search HDX with deterministic results"""
         results = []
         
-        # Use session manager context
         async with session_manager.get_session() as session:
             try:
                 params = {
@@ -175,7 +180,9 @@ class HumanitarianDataSources:
                                         "num_resources": package.get("num_resources", 0)
                                     }
                                     
-                                    if not any(existing.get("title") == result["title"] for existing in results):
+                                    # Avoid duplicates using normalized titles
+                                    normalized_title = self._normalize_title(result["title"])
+                                    if not any(self._normalize_title(existing.get("title", "")) == normalized_title for existing in results):
                                         results.append(result)
                         else:
                             logger.warning("HDX API returned success=false")
@@ -185,17 +192,18 @@ class HumanitarianDataSources:
             except Exception as e:
                 logger.warning(f"HDX search failed for '{query}': {e}")
         
+        # Sort deterministically before limiting
+        results.sort(key=lambda x: (x.get("title", ""), x.get("organization", "")))
         return results[:limit]
 
     async def _search_semantic_scholar_safe(self, query: str, domain: str, limit: int) -> List[Dict[str, Any]]:
-        """Search Semantic Scholar with optimized single query"""
+        """Search Semantic Scholar with deterministic results"""
         results = []
         
         headers = {}
         if settings.semantic_scholar_api_key:
             headers['x-api-key'] = settings.semantic_scholar_api_key
         
-        # Use session manager context
         async with session_manager.get_session() as session:
             try:
                 params = {
@@ -231,7 +239,9 @@ class HumanitarianDataSources:
                                     "open_access": paper.get("isOpenAccess", False)
                                 }
                                 
-                                if not any(existing.get("title") == result["title"] for existing in results):
+                                # Avoid duplicates using normalized titles
+                                normalized_title = self._normalize_title(result["title"])
+                                if not any(self._normalize_title(existing.get("title", "")) == normalized_title for existing in results):
                                     results.append(result)
                                     
                     elif response.status == 429:
@@ -243,24 +253,21 @@ class HumanitarianDataSources:
             except Exception as e:
                 logger.warning(f"Semantic Scholar search failed for '{query}': {e}")
         
+        # Sort deterministically before limiting
+        results.sort(key=lambda x: (x.get("title", ""), x.get("year", 0) or 0))
         return results[:limit]
 
-    # This method is now deprecated - individual sources should be called directly
-    async def search_all_sources(
-        self, 
-        query: str, 
-        domain: str, 
-        limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        DEPRECATED: This method causes multiple redundant calls
-        Use individual source methods directly instead
-        """
-        logger.warning("search_all_sources is deprecated - use individual source methods instead")
-        return []
+    def _normalize_title(self, title: str) -> str:
+        """Normalize title for consistent deduplication"""
+        if not title:
+            return ""
+        # Remove punctuation, extra spaces, convert to lowercase
+        normalized = re.sub(r'[^\w\s]', '', title.lower())
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized
     
     def _is_potentially_relevant(self, paper: Dict, domain: str) -> bool:
-        """More lenient relevance check"""
+        """More lenient relevance check with consistent evaluation"""
         title = paper.get('title', '').lower()
         summary = paper.get('summary', '').lower()
         text_content = f"{title} {summary}"
@@ -280,7 +287,7 @@ class HumanitarianDataSources:
         return (has_domain or has_humanitarian) and has_ai
     
     def _get_domain_terms(self, domain: str) -> List[str]:
-        """Get domain-specific search terms"""
+        """Get domain-specific search terms with consistent ordering"""
         domain_mapping = {
             "food_security": ["food", "nutrition", "agriculture", "farming", "crop", "harvest", "hunger", "malnutrition"],
             "health": ["health", "medical", "disease", "healthcare", "clinic", "hospital", "treatment", "epidemic"],
@@ -292,10 +299,11 @@ class HumanitarianDataSources:
             "livelihoods": ["livelihood", "income", "employment", "economic", "poverty"]
         }
         
-        return domain_mapping.get(domain, [domain.replace('_', ' ')])
+        terms = domain_mapping.get(domain, [domain.replace('_', ' ')])
+        return sorted(terms)  # Sort for consistency
     
     def _parse_arxiv_xml(self, xml_content: str) -> List[Dict[str, Any]]:
-        """Parse ArXiv XML response safely - IMPROVED"""
+        """Parse ArXiv XML response with consistent ordering"""
         papers = []
         
         try:
@@ -329,26 +337,26 @@ class HumanitarianDataSources:
                     if id_elem is not None:
                         paper['link'] = id_elem.text.strip()
                 
-                # Extract authors
+                # Extract authors (sorted for consistency)
                 authors = []
                 for author in entry.findall('author'):
                     name_elem = author.find('name')
                     if name_elem is not None:
                         authors.append(name_elem.text.strip())
-                paper['authors'] = authors
+                paper['authors'] = sorted(authors)  # Sort for consistency
                 
                 # Extract published date
                 published_elem = entry.find('published')
                 if published_elem is not None:
                     paper['published'] = published_elem.text.strip()
                 
-                # Extract categories
+                # Extract categories (sorted for consistency)
                 categories = []
                 for category in entry.findall('category'):
                     term = category.get('term')
                     if term:
                         categories.append(term)
-                paper['categories'] = categories
+                paper['categories'] = sorted(categories)  # Sort for consistency
                 
                 # Only include papers with title and summary
                 if paper.get('title') and paper.get('summary'):
@@ -380,26 +388,26 @@ class HumanitarianDataSources:
                     if link_elem is not None:
                         paper['link'] = link_elem.get('href')
                     
-                    # Extract authors
+                    # Extract authors (sorted for consistency)
                     authors = []
                     for author in entry.findall('atom:author', namespace):
                         name_elem = author.find('atom:name', namespace)
                         if name_elem is not None:
                             authors.append(name_elem.text.strip())
-                    paper['authors'] = authors
+                    paper['authors'] = sorted(authors)
                     
                     # Extract published date
                     published_elem = entry.find('atom:published', namespace)
                     if published_elem is not None:
                         paper['published'] = published_elem.text.strip()
                     
-                    # Extract categories
+                    # Extract categories (sorted for consistency)
                     categories = []
                     for category in entry.findall('atom:category', namespace):
                         term = category.get('term')
                         if term:
                             categories.append(term)
-                    paper['categories'] = categories
+                    paper['categories'] = sorted(categories)
                     
                     # Only include papers with title and summary
                     if paper.get('title') and paper.get('summary'):
@@ -410,17 +418,19 @@ class HumanitarianDataSources:
         except Exception as e:
             logger.error(f"Unexpected error parsing ArXiv XML: {e}")
         
+        # Sort papers for consistent output
+        papers.sort(key=lambda x: (x.get('title', ''), x.get('published', '')))
+        
         logger.info(f"Parsed {len(papers)} papers from ArXiv XML")
         return papers
     
-    # Humanitarian dataset methods - UPDATED to use search query
     async def get_reliefweb_datasets(self, search_query: str) -> List[Dataset]:
-        """Get datasets from ReliefWeb search results based on search query"""
+        """Get datasets from ReliefWeb with consistent ordering"""
         logger.info(f"Searching ReliefWeb for datasets with query: {search_query}")
         
         # Extract key terms from search query for better matching
         key_terms = [term.strip() for term in search_query.split() if len(term.strip()) > 3][:5]
-        search_term = " ".join(key_terms)
+        search_term = " ".join(sorted(key_terms))  # Sort for consistency
         
         results = await self._search_reliefweb_safe(search_term, "general", 10)
         
@@ -437,16 +447,19 @@ class HumanitarianDataSources:
             )
             datasets.append(dataset)
         
+        # Sort datasets for consistent output
+        datasets.sort(key=lambda x: (x.name, x.source))
+        
         logger.info(f"Found {len(datasets)} datasets from ReliefWeb")
         return datasets
     
     async def get_hdx_datasets(self, search_query: str) -> List[Dataset]:
-        """Get datasets from HDX (Humanitarian Data Exchange) based on search query"""
+        """Get datasets from HDX with consistent ordering"""
         logger.info(f"Searching HDX for datasets with query: {search_query}")
         
         # Extract key terms from search query for better matching
         key_terms = [term.strip() for term in search_query.split() if len(term.strip()) > 3][:5]
-        search_term = " ".join(key_terms)
+        search_term = " ".join(sorted(key_terms))  # Sort for consistency
         
         results = await self._search_hdx_safe(search_term, "general", 15)
         
@@ -464,64 +477,70 @@ class HumanitarianDataSources:
                     suitability_score=0.8  # HDX datasets tend to be high quality
                 )
                 
-                # Add additional HDX-specific metadata
+                # Add additional HDX-specific metadata consistently
+                metadata_parts = []
                 if result.get("organization"):
-                    dataset.description += f" | Organization: {result['organization']}"
+                    metadata_parts.append(f"Organization: {result['organization']}")
                 if result.get("tags"):
-                    dataset.description += f" | Tags: {', '.join(result['tags'][:3])}"
+                    sorted_tags = sorted(result['tags'][:3])  # Sort for consistency
+                    metadata_parts.append(f"Tags: {', '.join(sorted_tags)}")
                 if result.get("num_resources"):
-                    dataset.description += f" | Resources: {result['num_resources']} files"
+                    metadata_parts.append(f"Resources: {result['num_resources']} files")
+                
+                if metadata_parts:
+                    dataset.description += " | " + " | ".join(metadata_parts)
                 
                 datasets.append(dataset)
+        
+        # Sort datasets for consistent output
+        datasets.sort(key=lambda x: (-(x.suitability_score or 0), x.name))
         
         logger.info(f"Found {len(datasets)} datasets from HDX")
         return datasets
 
     def _extract_data_types_from_hdx(self, hdx_result: Dict) -> List[str]:
-        """Extract data types from HDX dataset metadata"""
+        """Extract data types from HDX dataset metadata with consistent ordering"""
         data_types = ["humanitarian_data"]
         
         # Analyze tags to determine data types
         tags = hdx_result.get("tags", [])
-        tag_text = " ".join(tags).lower()
+        tag_text = " ".join(sorted(tags)).lower()  # Sort for consistency
         
-        if any(term in tag_text for term in ["population", "demographic", "census"]):
-            data_types.append("demographic")
-        if any(term in tag_text for term in ["health", "medical", "disease"]):
-            data_types.append("health")
-        if any(term in tag_text for term in ["education", "school", "literacy"]):
-            data_types.append("education")
-        if any(term in tag_text for term in ["food", "nutrition", "agriculture"]):
-            data_types.append("food_security")
-        if any(term in tag_text for term in ["water", "sanitation", "wash"]):
-            data_types.append("water_sanitation")
-        if any(term in tag_text for term in ["disaster", "emergency", "crisis"]):
-            data_types.append("disaster_response")
-        if any(term in tag_text for term in ["refugee", "migration", "displacement"]):
-            data_types.append("migration")
-        if any(term in tag_text for term in ["protection", "violence", "safety"]):
-            data_types.append("protection")
-        if any(term in tag_text for term in ["economic", "livelihood", "employment"]):
-            data_types.append("economic")
-        if any(term in tag_text for term in ["geographic", "geospatial", "location"]):
-            data_types.append("geospatial")
+        type_mapping = {
+            "demographic": ["population", "demographic", "census"],
+            "health": ["health", "medical", "disease"],
+            "education": ["education", "school", "literacy"],
+            "food_security": ["food", "nutrition", "agriculture"],
+            "water_sanitation": ["water", "sanitation", "wash"],
+            "disaster_response": ["disaster", "emergency", "crisis"],
+            "migration": ["refugee", "migration", "displacement"],
+            "protection": ["protection", "violence", "safety"],
+            "economic": ["economic", "livelihood", "employment"],
+            "geospatial": ["geographic", "geospatial", "location"]
+        }
+        
+        for data_type, keywords in type_mapping.items():
+            if any(keyword in tag_text for keyword in keywords):
+                data_types.append(data_type)
         
         # Analyze title and description for additional context
         title_desc = f"{hdx_result.get('title', '')} {hdx_result.get('description', '')}".lower()
         
-        if "survey" in title_desc:
-            data_types.append("survey")
-        if "assessment" in title_desc:
-            data_types.append("assessment")
-        if "monitoring" in title_desc:
-            data_types.append("monitoring")
-        if any(term in title_desc for term in ["admin", "boundary", "administrative"]):
-            data_types.append("administrative")
+        additional_types = {
+            "survey": ["survey"],
+            "assessment": ["assessment"],
+            "monitoring": ["monitoring"],
+            "administrative": ["admin", "boundary", "administrative"]
+        }
         
-        return list(set(data_types))  # Remove duplicates
+        for data_type, keywords in additional_types.items():
+            if any(keyword in title_desc for keyword in keywords):
+                data_types.append(data_type)
+        
+        return sorted(list(set(data_types)))  # Remove duplicates and sort
     
     async def get_un_datasets(self, search_query: str) -> List[Dataset]:
-        """Get standard UN datasets filtered by search query relevance"""
+        """Get standard UN datasets with consistent filtering and ordering"""
         logger.info(f"Filtering UN datasets for query: {search_query}")
         
         all_datasets = [
@@ -599,27 +618,38 @@ class HumanitarianDataSources:
             )
         ]
         
-        # Filter datasets based on search query relevance
+        # Filter datasets based on search query relevance with consistent scoring
         query_lower = search_query.lower()
+        query_words = sorted(query_lower.split())  # Sort for consistency
         relevant_datasets = []
         
         for dataset in all_datasets:
             # Check if any key terms from the query match the dataset
             dataset_text = f"{dataset.name} {dataset.description}".lower()
             
-            # Simple relevance scoring
+            # Consistent relevance scoring
             relevance = 0
-            for word in query_lower.split():
+            for word in query_words:
                 if len(word) > 3 and word in dataset_text:
                     relevance += 1
             
+            # Add relevance score for consistent ordering
+            dataset.relevance_score = relevance
+            
             # Include if there's some relevance or if it's a general query
-            if relevance > 0 or len(query_lower.split()) < 3:
+            if relevance > 0 or len(query_words) < 3:
                 relevant_datasets.append(dataset)
+        
+        # Sort by relevance score, then suitability score, then name for consistency
+        relevant_datasets.sort(key=lambda x: (
+            -(getattr(x, 'relevance_score', 0)),
+            -(x.suitability_score or 0),
+            x.name
+        ))
         
         # If no specific matches, return a subset of most generally useful datasets
         if not relevant_datasets:
-            relevant_datasets = all_datasets[:4]
+            relevant_datasets = sorted(all_datasets, key=lambda x: (-(x.suitability_score or 0), x.name))[:4]
         
         logger.info(f"Found {len(relevant_datasets)} relevant UN datasets")
         return relevant_datasets

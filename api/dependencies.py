@@ -3,7 +3,6 @@ from typing import Optional
 from services.project_service import ProjectService
 from services.llm_analyzer import LLMAnalyzer
 from services.document_service import DocumentService
-from services.datasets.management_service import DatasetService
 from services.phase_services.reflection import ReflectionService
 from services.phase_services.scoping import ScopingService
 from services.phase_services.development import DevelopmentService
@@ -26,10 +25,6 @@ def get_llm_analyzer() -> LLMAnalyzer:
 def get_document_service() -> DocumentService:
     """Get document service instance"""
     return DocumentService()
-
-def get_dataset_service() -> DatasetService:
-    """Get dataset service instance"""
-    return DatasetService()
 
 def get_reflection_service() -> ReflectionService:
     """Get reflection service instance"""

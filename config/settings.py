@@ -20,15 +20,16 @@ class Settings(BaseSettings):
     openai_api_key: str
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
+    llm_temperature: float = 0.1
    
-    # Google Cloud Storage - Simplified folder-based organization
+    # Google Cloud Storage
     google_application_credentials: str
     google_creds_b64: Optional[str] = None
-    gcp_bucket_name: str  # Main bucket with domain folders
-    gcp_use_cases_bucket_name: str  # Separate bucket for use cases
-    gcp_indexes_bucket_name: str  # Separate bucket for storing vector indexes
+    gcp_bucket_name: str
+    gcp_use_cases_bucket_name: str
+    gcp_indexes_bucket_name: str
     
-    # Domain-specific folder paths within main bucket
+    # Domain-specific folder paths
     ai_ethics_folder_path: str = "ai-ethics/"
     humanitarian_context_folder_path: str = "humanitarian-context/"
     ai_technical_folder_path: str = "ai-technical/"
@@ -50,39 +51,36 @@ class Settings(BaseSettings):
     max_ai_technical_chunks: int = 12
     max_use_cases_chunks: int = 8
     
-    # Similarity thresholds per domain
+    # Similarity thresholds
     ai_ethics_similarity_threshold: float = 0.75
     humanitarian_context_similarity_threshold: float = 0.70
     ai_technical_similarity_threshold: float = 0.72
     use_cases_similarity_threshold: float = 0.68
     
-    # Enable/disable domain-specific indexes
+    # Enable/disable domain indexes
     enable_ai_ethics_index: bool = True
     enable_humanitarian_context_index: bool = True
     enable_ai_technical_index: bool = True
     enable_use_cases_bucket: bool = True
    
-   # Guidance Relevance Settings
-    guidance_relevance_threshold: float = 0.7  # Minimum relevance score (0.0-1.0)
-    max_guidance_sources_per_question: int = 2  # Maximum sources per question
-    guidance_keyword_weight: float = 0.6  # Weight for keyword overlap (increased)
-    guidance_context_weight: float = 0.4  # Weight for contextual relevance
-    
-    # Enable/disable guidance entirely if needed
+    # Guidance Settings
+    guidance_relevance_threshold: float = 0.7
+    max_guidance_sources_per_question: int = 2
     enable_question_guidance: bool = True
 
-    # External Data Source APIs
+    # Academic Sources for AI Use Cases
     semantic_scholar_api_key: Optional[str] = None
+    enable_arxiv: bool = True
+    enable_semantic_scholar: bool = True
+    enable_openalex: bool = True
+    enable_papers_with_code: bool = True
+    
+    # Humanitarian Sources for Datasets
     reliefweb_api_url: str = "https://api.reliefweb.int/v1"
     reliefweb_app_name: str = "humanitarian-ai-toolkit"
     hdx_api_url: str = "https://data.humdata.org/api/3/action"
-    arxiv_api_url: str = "http://export.arxiv.org/api/query"
-    
-    # Enable/disable external sources
-    enable_arxiv: bool = True
     enable_reliefweb: bool = True
-    enable_hdx: bool = False
-    enable_semantic_scholar: bool = False
+    enable_hdx: bool = True
     
     # API Performance Settings
     api_request_timeout: int = 45
@@ -96,27 +94,7 @@ class Settings(BaseSettings):
     max_results_per_source: int = 50
     max_total_search_results: int = 100
     max_use_cases_returned: int = 6
-    max_use_cases_for_enrichment: int = 50
-    minimum_relevance_score: float = 0.3
     
-    # Search Relevance Weights
-    domain_search_weight: float = 0.4
-    ai_keywords_weight: float = 0.3
-    project_keywords_weight: float = 0.2
-    quality_weight: float = 0.1
-    
-    # Educational Content Settings
-    include_educational_content: bool = True
-    enable_humanitarian_educational_focus: bool = True
-    max_educational_examples: int = 3
-    include_real_world_impact: bool = True
-    include_decision_guidance: bool = True
-    include_similarity_analysis: bool = True
-   
-    # Fallback Behavior
-    use_fallback_on_api_failure: bool = False
-    fallback_use_case_count: int = 0
-   
     # File Upload
     max_file_size: int = 50 * 1024 * 1024  # 50MB
     allowed_file_types: str = ".pdf,.txt,.docx,.csv,.xlsx"
@@ -132,14 +110,6 @@ class Settings(BaseSettings):
     @classmethod
     def get_semantic_scholar_key(cls, v):
         return v or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
-    
-    @field_validator('enable_semantic_scholar', mode='before')
-    @classmethod
-    def set_semantic_scholar_enabled(cls, v):
-        # Auto-enable if API key is provided
-        if isinstance(v, str):
-            return v.lower() == "true"
-        return bool(os.getenv("SEMANTIC_SCHOLAR_API_KEY")) if v is None else v
    
     class Config:
         env_file = ".env"
@@ -148,12 +118,11 @@ class Settings(BaseSettings):
 # Global settings instance
 settings = Settings()
 
-# Validation
 def validate_settings():
     """Validate required settings on startup"""
     required_vars = [
         "mongodb_url",
-        "openai_api_key", 
+        "openai_api_key",
         "gcp_bucket_name",
         "gcp_use_cases_bucket_name",
         "gcp_indexes_bucket_name"
@@ -167,65 +136,25 @@ def validate_settings():
    
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-    
-    # Validate folder paths end with '/'
-    folder_paths = [
-        settings.ai_ethics_folder_path,
-        settings.humanitarian_context_folder_path,
-        settings.ai_technical_folder_path
-    ]
-    
-    for i, path in enumerate(folder_paths):
-        if path and not path.endswith('/'):
-            folder_names = ['ai_ethics_folder_path', 'humanitarian_context_folder_path', 'ai_technical_folder_path']
-            print(f"Warning: {folder_names[i]} should end with '/'. Auto-correcting...")
-            if i == 0:
-                settings.ai_ethics_folder_path = path + '/'
-            elif i == 1:
-                settings.humanitarian_context_folder_path = path + '/'
-            elif i == 2:
-                settings.ai_technical_folder_path = path + '/'
 
-def get_domain_chunk_limits():
-    """Get chunk limits for all domains"""
-    return {
-        "ai_ethics": settings.max_ai_ethics_chunks,
-        "humanitarian_context": settings.max_humanitarian_context_chunks,
-        "ai_technical": settings.max_ai_technical_chunks,
-        "use_cases": settings.max_use_cases_chunks
-    }
-
-def get_domain_similarity_thresholds():
-    """Get similarity thresholds for all domains"""
-    return {
-        "ai_ethics": settings.ai_ethics_similarity_threshold,
-        "humanitarian_context": settings.humanitarian_context_similarity_threshold,
-        "ai_technical": settings.ai_technical_similarity_threshold,
-        "use_cases": settings.use_cases_similarity_threshold
-    }
-
-def get_enabled_domains():
-    """Get list of enabled domain indexes"""
-    enabled = []
-    if settings.enable_ai_ethics_index:
-        enabled.append("ai_ethics")
-    if settings.enable_humanitarian_context_index:
-        enabled.append("humanitarian_context") 
-    if settings.enable_ai_technical_index:
-        enabled.append("ai_technical")
-    if settings.enable_use_cases_bucket:
-        enabled.append("use_cases")
-    return enabled
-
-def get_enabled_external_sources():
-    """Get list of enabled external data sources"""
+def get_enabled_academic_sources():
+    """Get list of enabled academic sources for AI use case search"""
     enabled = []
     if settings.enable_arxiv:
         enabled.append("arxiv")
+    if settings.enable_semantic_scholar:
+        enabled.append("semantic_scholar")
+    if settings.enable_openalex:
+        enabled.append("openalex")
+    if settings.enable_papers_with_code:
+        enabled.append("papers_with_code")
+    return enabled
+
+def get_enabled_dataset_sources():
+    """Get list of enabled humanitarian sources for dataset discovery"""
+    enabled = []
     if settings.enable_reliefweb:
         enabled.append("reliefweb")
     if settings.enable_hdx:
         enabled.append("hdx")
-    if settings.enable_semantic_scholar:
-        enabled.append("semantic_scholar")
     return enabled
