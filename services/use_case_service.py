@@ -396,7 +396,7 @@ Abstract: {paper.get('description', '')[:300]}
             try:
                 # Add small delay between batches to avoid rate limiting
                 if i > 0:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
                     
                 enhanced_batch = await self._enhance_paper_batch(
                     batch, project_description, problem_domain

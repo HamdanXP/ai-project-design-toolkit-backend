@@ -76,11 +76,13 @@ class Settings(BaseSettings):
     enable_papers_with_code: bool = True
     
     # Humanitarian Sources for Datasets
-    reliefweb_api_url: str = "https://api.reliefweb.int/v1"
-    reliefweb_app_name: str = "humanitarian-ai-toolkit"
     hdx_api_url: str = "https://data.humdata.org/api/3/action"
-    enable_reliefweb: bool = True
+    unhcr_api_url: str = "https://api.unhcr.org"
+    who_gho_api_url: str = "https://ghoapi.azureedge.net/api"
+
     enable_hdx: bool = True
+    enable_unhcr: bool = True 
+    enable_who_gho: bool = True
     
     # API Performance Settings
     api_request_timeout: int = 45
@@ -94,6 +96,7 @@ class Settings(BaseSettings):
     max_results_per_source: int = 50
     max_total_search_results: int = 100
     max_use_cases_returned: int = 6
+    max_datasets_returned: int = 15
     
     # File Upload
     max_file_size: int = 50 * 1024 * 1024  # 50MB
@@ -136,25 +139,3 @@ def validate_settings():
    
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-def get_enabled_academic_sources():
-    """Get list of enabled academic sources for AI use case search"""
-    enabled = []
-    if settings.enable_arxiv:
-        enabled.append("arxiv")
-    if settings.enable_semantic_scholar:
-        enabled.append("semantic_scholar")
-    if settings.enable_openalex:
-        enabled.append("openalex")
-    if settings.enable_papers_with_code:
-        enabled.append("papers_with_code")
-    return enabled
-
-def get_enabled_dataset_sources():
-    """Get list of enabled humanitarian sources for dataset discovery"""
-    enabled = []
-    if settings.enable_reliefweb:
-        enabled.append("reliefweb")
-    if settings.enable_hdx:
-        enabled.append("hdx")
-    return enabled
