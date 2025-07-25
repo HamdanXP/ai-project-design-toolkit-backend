@@ -11,7 +11,6 @@ import re
 logger = logging.getLogger(__name__)
 
 class UseCaseService:
-    """Simplified use case search service for humanitarian AI projects"""
     
     def __init__(self):
         pass
@@ -19,56 +18,49 @@ class UseCaseService:
     async def search_ai_use_cases(
         self, 
         project_description: str, 
-        problem_domain: str
+        problem_domain: str,
+        technical_infrastructure: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
-        """Main entry point for AI use case search"""
-        
-        logger.info(f"Starting AI use case search for '{problem_domain}' domain")
         
         try:
-            # Step 1: Generate search strategy
             search_terms = await self._generate_search_terms(project_description, problem_domain)
             if not search_terms:
                 logger.error("Failed to generate search terms")
                 return []
             
-            # Step 2: Search all sources in parallel
             all_papers = await self._search_all_sources(search_terms)
             if not all_papers:
                 logger.warning("No papers found from academic sources")
                 return []
-            
-            logger.info(f"Retrieved {len(all_papers)} papers from academic sources")
                 
-            # Step 3: Filter for AI relevance (with rate limiting)
-            await asyncio.sleep(0.5)  # Small delay before LLM call to avoid rate limiting
+            await asyncio.sleep(0.5)
             relevant_papers = await self._filter_relevant_papers(
-                all_papers, project_description, problem_domain
+                all_papers, project_description, problem_domain, technical_infrastructure
             )
             
             if not relevant_papers:
                 logger.warning("No relevant AI papers found")
                 return []
             
-            # Step 4: Add educational content (with rate limiting)
-            await asyncio.sleep(0.5)  # Small delay before educational content calls
-            logger.info(f"Enhancing {len(relevant_papers)} papers with educational content")
+            await asyncio.sleep(0.5)
             use_cases = await self._add_educational_content(
-                relevant_papers, project_description, problem_domain
+                relevant_papers, project_description, problem_domain, technical_infrastructure
             )
             
             final_count = min(len(use_cases), settings.max_use_cases_returned)
             final_use_cases = use_cases[:final_count]
             
-            logger.info(f"Use case search completed: returning {len(final_use_cases)} AI use cases")
             return final_use_cases
             
         except Exception as e:
             logger.error(f"Use case search failed: {e}")
             return []
 
-    async def _generate_search_terms(self, project_description: str, problem_domain: str) -> Optional[Dict[str, List[str]]]:
-        """Generate AI-focused search terms for each source"""
+    async def _generate_search_terms(
+        self, 
+        project_description: str, 
+        problem_domain: str
+    ) -> Optional[Dict[str, List[str]]]:
         
         prompt = f"""
         Create specific AI research search queries for this humanitarian project:
@@ -76,18 +68,18 @@ class UseCaseService:
         Project: "{project_description}"
         Domain: {problem_domain}
         
-        Generate 2 AI-focused search queries per source that find papers about artificial intelligence, machine learning, or automated systems for this specific problem:
+        Generate 2 focused AI search queries per source that find papers about artificial intelligence, machine learning, or automated systems for this specific problem:
         {{
             "arxiv": ["AI/ML query 1 with specific technical terms", "AI/ML query 2 with implementation focus"],
             "semantic_scholar": ["machine learning query 1", "AI methodology query 2"], 
-            "openalex": ["artificial intelligence query 1", "automated system query 2"],
-            "papers_with_code": ["implementation query 1", "model/algorithm query 2"]
+            "openalex": ["artificial intelligence query 1", "automated system query 2"]
         }}
         
         Requirements:
         - Every query must include AI/ML terms (artificial intelligence, machine learning, algorithm, model, etc.)
-        - Queries should target the specific problem described in the project
-        - Focus on finding papers that implement AI solutions, not just discuss the problem domain
+        - Keep queries focused on the problem domain without infrastructure specifics
+        - Target papers that implement AI solutions for humanitarian problems
+        - Use academic terminology that would appear in paper titles/abstracts
         """
         
         try:
@@ -100,7 +92,6 @@ class UseCaseService:
             return None
 
     async def _search_all_sources(self, search_terms: Dict[str, List[str]]) -> List[Dict[str, Any]]:
-        """Search all sources in parallel"""
         
         tasks = []
         enabled_sources = []
@@ -116,16 +107,10 @@ class UseCaseService:
         if settings.enable_openalex and search_terms.get("openalex"):
             tasks.append(self._search_source("openalex", search_terms["openalex"]))
             enabled_sources.append("openalex")
-            
-        if settings.enable_papers_with_code and search_terms.get("papers_with_code"):
-            tasks.append(self._search_source("papers_with_code", search_terms["papers_with_code"]))
-            enabled_sources.append("papers_with_code")
         
         if not tasks:
             logger.error("No search tasks created")
             return []
-            
-        logger.info(f"Searching {len(tasks)} academic sources in parallel")
         
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -138,9 +123,7 @@ class UseCaseService:
                     logger.error(f"{source_name} search failed: {result}")
                 elif isinstance(result, list):
                     all_papers.extend(result)
-                    logger.info(f"{source_name}: {len(result)} papers")
             
-            # Simple deduplication by normalized title
             seen_titles = set()
             unique_papers = []
             
@@ -159,12 +142,11 @@ class UseCaseService:
             return []
 
     async def _search_source(self, source: str, queries: List[str]) -> List[Dict[str, Any]]:
-        """Search a single source with multiple queries"""
         
         papers = []
         max_per_query = 10
         
-        for query in queries[:2]:  # Use only first 2 queries
+        for query in queries[:2]:
             try:
                 if source == "arxiv":
                     batch = await self._search_arxiv(query, max_per_query)
@@ -172,13 +154,11 @@ class UseCaseService:
                     batch = await self._search_semantic_scholar(query, max_per_query)
                 elif source == "openalex":
                     batch = await self._search_openalex(query, max_per_query)
-                elif source == "papers_with_code":
-                    batch = await self._search_papers_with_code(query, max_per_query)
                 else:
                     continue
                     
                 papers.extend(batch)
-                await asyncio.sleep(0.5)  # Rate limiting
+                await asyncio.sleep(0.5)
                 
             except Exception as e:
                 logger.error(f"{source} query failed: {e}")
@@ -190,35 +170,27 @@ class UseCaseService:
         self, 
         papers: List[Dict[str, Any]], 
         project_description: str,
-        problem_domain: str
+        problem_domain: str,
+        technical_infrastructure: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
-        """Filter papers for AI relevance using intelligent criteria"""
         
         if not papers:
             return []
-            
-        logger.info(f"Filtering {len(papers)} papers for AI relevance")
         
-        # Step 1: AI-mandatory filtering
         ai_papers = self._filter_ai_papers(papers)
-        logger.info(f"AI filtering: {len(ai_papers)} papers contain AI content")
         
         if not ai_papers:
             logger.warning("No papers contain sufficient AI content")
             return []
             
-        # Step 2: LLM relevance scoring for AI papers
         relevant_papers = await self._llm_relevance_filter(
-            ai_papers[:20], project_description, problem_domain
+            ai_papers[:20], project_description, problem_domain, technical_infrastructure
         )
         
-        logger.info(f"Relevance filtering: {len(relevant_papers)} papers are highly relevant")
         return relevant_papers
 
     def _filter_ai_papers(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Filter papers that are definitely about AI/ML"""
         
-        # Strong AI indicators that must be present
         strong_ai_terms = [
             "artificial intelligence", "machine learning", "deep learning", "neural network",
             "ai", "ml", "algorithm", "model", "prediction", "classification", 
@@ -229,10 +201,8 @@ class UseCaseService:
         for paper in papers:
             text = f"{paper.get('title', '')} {paper.get('description', '')}".lower()
             
-            # Count AI term occurrences
             ai_score = sum(text.count(term) for term in strong_ai_terms)
             
-            # Must have strong AI presence (multiple mentions or key terms)
             if ai_score >= 3 or any(term in text for term in ["artificial intelligence", "machine learning", "deep learning", "neural network"]):
                 ai_papers.append(paper)
             
@@ -242,9 +212,9 @@ class UseCaseService:
         self, 
         papers: List[Dict[str, Any]], 
         project_description: str,
-        problem_domain: str
+        problem_domain: str,
+        technical_infrastructure: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
-        """Use LLM to score AI paper relevance"""
         
         papers_text = ""
         for i, paper in enumerate(papers):
@@ -255,11 +225,25 @@ Abstract: {paper.get('description', '')[:300]}
 ---
 """
         
+        infrastructure_context = ""
+        if technical_infrastructure:
+            infrastructure_context = f"""
+            
+            Available Infrastructure:
+            - Computing: {technical_infrastructure.get('computing_resources', 'unspecified')}
+            - Storage: {technical_infrastructure.get('storage_data', 'unspecified')}
+            - Connectivity: {technical_infrastructure.get('internet_connectivity', 'unspecified')}
+            - Deployment: {technical_infrastructure.get('deployment_environment', 'unspecified')}
+            
+            Consider whether each AI approach could be adapted to work with this infrastructure.
+            """
+        
         prompt = f"""
         Rate these AI research papers for relevance to this humanitarian project:
         
         Project: "{project_description}"
         Domain: {problem_domain}
+        {infrastructure_context}
         
         Papers:
         {papers_text}
@@ -267,8 +251,10 @@ Abstract: {paper.get('description', '')[:300]}
         CRITERIA:
         - Rate 8-10: AI methods directly applicable to the project goals
         - Rate 6-7: AI techniques that could be adapted for the project
-        - Rate 4-5: Relevant AI domain but requires significant adaptation
+        - Rate 4-5: Relevant AI domain but requires adaptation
         - Rate 0-3: AI paper but not relevant to the project
+        
+        For infrastructure consideration: Most AI approaches can be adapted to different infrastructure setups, so focus primarily on problem relevance rather than exact infrastructure match.
         
         Return JSON array:
         [
@@ -276,7 +262,7 @@ Abstract: {paper.get('description', '')[:300]}
             ...
         ]
         
-        Focus on practical AI applicability to the stated goals.
+        Focus on practical AI applicability to the humanitarian goals.
         """
         
         try:
@@ -295,117 +281,38 @@ Abstract: {paper.get('description', '')[:300]}
                     paper["relevance_reason"] = score_data.get("reason", "")
                     relevant_papers.append(paper)
             
-            # Sort by relevance score
             relevant_papers.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
             return relevant_papers
             
         except Exception as e:
             logger.error(f"LLM relevance filtering failed: {e}")
-            return []
-
-
-
-
-
-    async def _strict_llm_relevance_filter(
-        self, 
-        papers: List[Dict[str, Any]], 
-        project_description: str,
-        problem_domain: str
-    ) -> List[Dict[str, Any]]:
-        """Use LLM with focused relevance criteria"""
-        
-        papers_text = ""
-        for i, paper in enumerate(papers):
-            papers_text += f"""
-Paper {i+1}:
-Title: {paper.get('title', '')[:150]}
-Abstract: {paper.get('description', '')[:300]}
----
-"""
-        
-        prompt = f"""
-        Rate these research papers for relevance to this specific humanitarian AI project:
-        
-        Project: "{project_description}"
-        Domain: {problem_domain}
-        
-        Papers:
-        {papers_text}
-        
-        SCORING CRITERIA:
-        - Rate 8-10: Directly addresses the specific problem and is highly applicable
-        - Rate 6-7: Relevant to the domain and could be adapted to the problem
-        - Rate 4-5: Related but would require significant adaptation
-        - Rate 0-3: Not relevant to the specific problem
-        
-        Return JSON array:
-        [
-            {{"paper_number": 1, "relevance_score": 7, "reason": "addresses refugee data management which relates to registration"}},
-            ...
-        ]
-        
-        Focus on practical applicability to the stated project goals.
-        """
-        
-        try:
-            logger.info("Applying LLM relevance filtering")
-            response = await llm_service.analyze_text("", prompt)
-            cleaned = self._clean_json_response(response)
-            scores = json.loads(cleaned)
-            
-            relevant_papers = []
-            for score_data in scores:
-                paper_idx = score_data.get("paper_number", 0) - 1
-                relevance = score_data.get("relevance_score", 0)
-                
-                # Adjusted threshold: 6+ instead of 8+
-                if 0 <= paper_idx < len(papers) and relevance >= 6:
-                    paper = papers[paper_idx].copy()
-                    paper["relevance_score"] = relevance
-                    paper["relevance_reason"] = score_data.get("reason", "")
-                    relevant_papers.append(paper)
-                    logger.info(f"Paper '{paper.get('title', '')[:50]}...' scored {relevance}/10 - included")
-                elif 0 <= paper_idx < len(papers):
-                    logger.info(f"Paper '{papers[paper_idx].get('title', '')[:50]}...' scored {relevance}/10 - excluded (below threshold)")
-            
-            # Sort by relevance score
-            relevant_papers.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-            return relevant_papers
-            
-        except Exception as e:
-            logger.error(f"LLM relevance filtering failed: {e}")
-            # Return empty list instead of fallback
             return []
 
     async def _add_educational_content(
         self, 
         papers: List[Dict[str, Any]], 
         project_description: str,
-        problem_domain: str
+        problem_domain: str,
+        technical_infrastructure: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
-        """Add educational content to papers using batch processing"""
         
         enhanced_papers = []
-        batch_size = 3  # Process 3 papers per API call
+        batch_size = 3
         
-        # Process papers in batches to reduce API calls
         for i in range(0, len(papers[:8]), batch_size):
             batch = papers[i:i + batch_size]
             
             try:
-                # Add small delay between batches to avoid rate limiting
                 if i > 0:
                     await asyncio.sleep(0.5)
                     
                 enhanced_batch = await self._enhance_paper_batch(
-                    batch, project_description, problem_domain
+                    batch, project_description, problem_domain, technical_infrastructure
                 )
                 enhanced_papers.extend(enhanced_batch)
                 
             except Exception as e:
                 logger.error(f"Failed to enhance batch {i//batch_size + 1}: {e}")
-                # Skip failed batches rather than stopping
                 continue
         
         return enhanced_papers
@@ -414,9 +321,9 @@ Abstract: {paper.get('description', '')[:300]}
         self, 
         papers: List[Dict[str, Any]], 
         project_description: str,
-        problem_domain: str
+        problem_domain: str,
+        technical_infrastructure: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
-        """Enhance multiple papers in a single API call"""
         
         papers_text = ""
         for i, paper in enumerate(papers):
@@ -428,10 +335,24 @@ Source: {paper.get('source', '')}
 ---
 """
         
+        infrastructure_context = ""
+        if technical_infrastructure:
+            infrastructure_context = f"""
+            
+            Available Infrastructure:
+            - Computing: {technical_infrastructure.get('computing_resources', 'unspecified')}
+            - Storage: {technical_infrastructure.get('storage_data', 'unspecified')} 
+            - Connectivity: {technical_infrastructure.get('internet_connectivity', 'unspecified')}
+            - Deployment: {technical_infrastructure.get('deployment_environment', 'unspecified')}
+            
+            Provide implementation guidance that considers these infrastructure constraints.
+            """
+        
         prompt = f"""
         Create educational content for these {len(papers)} AI research papers for humanitarian practitioners:
         
         Project Context: "{project_description}" (Domain: {problem_domain})
+        {infrastructure_context}
         
         Research Papers:
         {papers_text}
@@ -443,11 +364,11 @@ Source: {paper.get('source', '')}
                 "how_it_works": "2-3 sentences explaining the AI approach in simple terms",
                 "real_world_impact": "How this AI solution could help humanitarian work",
                 "similarity_to_project": "Direct relevance to the user's specific project",
-                "implementation_approach": "Practical steps for humanitarian implementation",
+                "implementation_approach": "Practical steps for humanitarian implementation considering available infrastructure",
                 "key_success_factors": ["3-4 critical success factors"],
                 "resource_requirements": ["3-4 specific resource needs"],
                 "challenges": ["2-3 implementation challenges"],
-                "decision_guidance": "Should this approach be pursued for the project?"
+                "decision_guidance": "Should this approach be pursued given the project goals?"
             }},
             ...
         ]
@@ -461,7 +382,6 @@ Source: {paper.get('source', '')}
             cleaned_response = self._clean_json_response(response)
             educational_contents = json.loads(cleaned_response)
             
-            # Apply educational content to papers
             enhanced_papers = []
             for i, paper in enumerate(papers):
                 enhanced_paper = paper.copy()
@@ -480,7 +400,6 @@ Source: {paper.get('source', '')}
                         "decision_guidance": content.get("decision_guidance", "")
                     })
                 else:
-                    # Minimal fallback if batch response is incomplete
                     enhanced_paper.update({
                         "id": f"paper_{hash(paper.get('title', '')) % 100000}",
                         "how_it_works": "This AI research provides technical insights for humanitarian applications.",
@@ -497,56 +416,7 @@ Source: {paper.get('source', '')}
             logger.error(f"Batch educational enhancement failed: {e}")
             raise
 
-    async def _enhance_single_paper(
-        self, 
-        paper: Dict[str, Any], 
-        project_description: str,
-        problem_domain: str
-    ) -> Dict[str, Any]:
-        """Enhance a single paper with educational content"""
-        
-        prompt = f"""
-        Create educational content for this research paper for humanitarian practitioners:
-        
-        Project Context: "{project_description}"
-        Domain: {problem_domain}
-        
-        Paper:
-        Title: {paper.get('title', '')}
-        Abstract: {paper.get('description', '')}
-        
-        Generate practical guidance in JSON format:
-        {{
-            "how_it_works": "2-3 sentences explaining the approach in simple terms",
-            "real_world_impact": "How this could help humanitarian work",
-            "similarity_to_project": "How this relates to the user's project",
-            "implementation_approach": "Practical steps for implementation",
-            "key_success_factors": ["factor1", "factor2", "factor3"],
-            "resource_requirements": ["requirement1", "requirement2", "requirement3"],
-            "challenges": ["challenge1", "challenge2"]
-        }}
-        
-        Keep language accessible for non-technical users.
-        """
-        
-        try:
-            response = await llm_service.analyze_text("", prompt)
-            cleaned = self._clean_json_response(response)
-            educational_content = json.loads(cleaned)
-            
-            # Merge educational content with paper
-            enhanced_paper = paper.copy()
-            enhanced_paper.update(educational_content)
-            enhanced_paper["id"] = f"paper_{hash(paper.get('title', '')) % 100000}"
-            
-            return enhanced_paper
-            
-        except Exception as e:
-            logger.error(f"Educational enhancement failed: {e}")
-            raise
-
     async def _search_arxiv(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Search arXiv"""
         papers = []
         
         async with session_manager.get_session() as session:
@@ -586,7 +456,6 @@ Source: {paper.get('source', '')}
         return papers
 
     async def _search_semantic_scholar(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Search Semantic Scholar"""
         papers = []
         
         headers = {}
@@ -633,7 +502,6 @@ Source: {paper.get('source', '')}
         return papers
 
     async def _search_openalex(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Search OpenAlex"""
         papers = []
         
         async with session_manager.get_session() as session:
@@ -652,25 +520,21 @@ Source: {paper.get('source', '')}
                     if response.status == 200:
                         data = await response.json()
                         for work in data.get("results", [])[:limit]:
-                            # Fix: Handle None values properly
                             title = work.get("title") 
                             if title:
                                 title = title.strip()
                             
                             abstract = work.get("abstract") or work.get("abstract_inverted_index")
                             
-                            # Handle inverted index abstract format
                             if isinstance(abstract, dict):
-                                # Convert inverted index to text (simplified)
                                 words = []
-                                for word, positions in list(abstract.items())[:100]:  # Limit to first 100 words
+                                for word, positions in list(abstract.items())[:100]:
                                     words.extend([word] * len(positions))
-                                abstract = " ".join(words[:200])  # First 200 words
+                                abstract = " ".join(words[:200])
                             elif abstract:
                                 abstract = str(abstract)
                             
                             if title and abstract and len(title.strip()) > 10 and len(abstract.strip()) > 50:
-                                # Get paper URL
                                 paper_url = ""
                                 primary_location = work.get("primary_location", {})
                                 if primary_location and primary_location.get("landing_page_url"):
@@ -693,49 +557,7 @@ Source: {paper.get('source', '')}
         
         return papers
 
-    async def _search_papers_with_code(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Search Papers With Code using correct API endpoint"""
-        papers = []
-        
-        async with session_manager.get_session() as session:
-            try:
-                params = {
-                    "q": query,
-                    "page": 1,
-                    "items_per_page": limit
-                }
-                
-                async with session.get(
-                    "https://paperswithcode.com/api/v1/search",
-                    params=params,
-                    timeout=30
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        results = data.get("results", [])
-                        
-                        for paper in results[:limit]:
-                            title = paper.get("title", "").strip()
-                            abstract = paper.get("abstract", "")
-                            
-                            if title and abstract:
-                                papers.append({
-                                    "title": title,
-                                    "description": abstract[:500],
-                                    "source": "Papers With Code",
-                                    "source_url": f"https://paperswithcode.com/paper/{paper.get('id', '')}",
-                                    "type": "academic_paper_with_code",
-                                    "year": paper.get("published"),
-                                    "implementation_available": True
-                                })
-                    
-            except Exception as e:
-                logger.error(f"Papers With Code search failed: {e}")
-        
-        return papers
-
     def _parse_arxiv_xml(self, xml_content: str) -> List[Dict[str, Any]]:
-        """Parse arXiv XML response"""
         papers = []
         
         try:
@@ -770,7 +592,6 @@ Source: {paper.get('source', '')}
         return papers
 
     def _clean_json_response(self, response: str) -> str:
-        """Clean LLM response to extract JSON"""
         response = re.sub(r'```json\s*', '', response)
         response = re.sub(r'```\s*', '', response)
         

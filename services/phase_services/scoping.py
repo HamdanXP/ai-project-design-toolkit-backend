@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from config import settings
 from services.use_case_service import UseCaseService
 from services.datasets.discovery_service import DatasetDiscoveryService
@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ScopingService:
-    """Simplified scoping service focusing on core functionality"""
+    """Enhanced scoping service with infrastructure-aware use case search"""
     
     def __init__(self):
         self.use_case_service = UseCaseService()
@@ -17,17 +17,21 @@ class ScopingService:
     async def get_educational_use_cases(
         self, 
         project_description: str, 
-        problem_domain: str
+        problem_domain: str,
+        technical_infrastructure: Optional[Dict[str, str]] = None
     ) -> List[Dict[str, Any]]:
-        """Get AI use cases with educational content"""
+        """Get AI use cases with educational content, filtered by infrastructure compatibility"""
         
-        logger.info(f"Getting AI use cases for domain: {problem_domain}")
+        logger.info(f"Getting infrastructure-aware AI use cases for domain: {problem_domain}")
+        if technical_infrastructure:
+            logger.info(f"Infrastructure context: {technical_infrastructure}")
+        
         try:
             use_cases = await self.use_case_service.search_ai_use_cases(
-                project_description, problem_domain
+                project_description, problem_domain, technical_infrastructure
             )
             
-            logger.info(f"Found {len(use_cases)} AI use cases")
+            logger.info(f"Found {len(use_cases)} infrastructure-compatible AI use cases")
             return use_cases
             
         except Exception as e:
@@ -55,14 +59,12 @@ class ScopingService:
                 problem_domain
             )
             
-            # Sort by suitability score with fallback
             datasets.sort(key=lambda x: (
-                -(x.suitability_score or 0.0),  # Primary: suitability score (descending)
-                x.source,  # Secondary: source name (ascending) 
-                x.name     # Tertiary: dataset name (ascending)
+                -(x.suitability_score or 0.0),
+                x.source,
+                x.name
             ))
             
-            # Log dataset sources for transparency
             source_counts = {}
             for dataset in datasets:
                 source = dataset.source

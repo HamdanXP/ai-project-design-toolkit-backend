@@ -1,13 +1,29 @@
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
-from models.project import Dataset, UseCase, DataSuitabilityAssessment, DeploymentEnvironment
+from models.project import Dataset, UseCase
 
 
-class FeasibilitySummary(BaseModel):
-    overall_percentage: int
-    feasibility_level: str  # 'high', 'medium', 'low'
-    key_constraints: List[str]
+class TechnicalInfrastructure(BaseModel):
+    computing_resources: str
+    storage_data: str
+    internet_connectivity: str
+    deployment_environment: str
+
+
+class InfrastructureScoring(BaseModel):
+    score: int
+    max_score: int
+    reasoning: str
+
+
+class InfrastructureAssessment(BaseModel):
+    score: int
+    can_proceed: bool
+    reasoning: str
+    scoring_breakdown: Dict[str, InfrastructureScoring]
+    recommendations: List[str]
+    non_ai_alternatives: Optional[List[str]] = None
 
 
 class DataSuitabilitySummary(BaseModel):
@@ -20,12 +36,12 @@ class ScopingCompletionRequest(BaseModel):
     selected_use_case: Optional[UseCase] = None
     selected_dataset: Optional[Dataset] = None
     
-    # Assessment summaries
-    feasibility_summary: FeasibilitySummary
+    # Infrastructure assessment
+    infrastructure_assessment: InfrastructureAssessment
     data_suitability: DataSuitabilitySummary
     
-    # All constraint responses for detailed storage
-    constraints: List[Dict[str, Any]] = []
+    # Technical infrastructure details
+    technical_infrastructure: TechnicalInfrastructure
     
     # All suitability check responses for detailed storage
     suitability_checks: List[Dict[str, Any]] = []
@@ -34,9 +50,6 @@ class ScopingCompletionRequest(BaseModel):
     active_step: int = 5
     ready_to_proceed: bool = False
     reasoning: Optional[str] = None
-    
-    # Optional deployment environment from constraints
-    deployment_environment: Optional[DeploymentEnvironment] = None
 
 
 class ScopingCompletionResponse(BaseModel):
@@ -46,10 +59,10 @@ class ScopingCompletionResponse(BaseModel):
     next_phase: str = "development"
 
 
-class FinalFeasibilityDecision(BaseModel):
+class ProjectReadinessDecision(BaseModel):
     ready_to_proceed: bool
     overall_score: int
-    feasibility_level: str
-    suitability_level: str
+    infrastructure_score: int
+    suitability_score: int
     key_recommendations: List[str]
     areas_for_improvement: List[str]
