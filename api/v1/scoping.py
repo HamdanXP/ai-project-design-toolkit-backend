@@ -37,7 +37,7 @@ async def get_similar_use_cases(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        problem_domain = project.problem_domain or "general_humanitarian"
+        problem_domain = project.problem_domain or ""
         
         technical_infrastructure = None
         if request_data and "technical_infrastructure" in request_data:
@@ -60,7 +60,7 @@ async def get_similar_use_cases(
                 return APIResponse(
                     success=True,
                     data=[],
-                    message=f"No suitable AI use cases found for {problem_domain}. You may proceed with general AI principles."
+                    message="No suitable AI use cases found. You may proceed with general AI principles."
                 )
             
         except Exception as e:
@@ -68,7 +68,7 @@ async def get_similar_use_cases(
             return APIResponse(
                 success=True,
                 data=[],
-                message=f"Unable to retrieve AI use cases. The search service may be temporarily unavailable."
+                message="Unable to retrieve AI use cases. The search service may be temporarily unavailable."
             )
             
     except HTTPException:
@@ -95,7 +95,7 @@ async def get_recommended_datasets(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        problem_domain = project.problem_domain or "general_humanitarian"
+        problem_domain = project.problem_domain or ""
         
         use_case_id = request_data.get("use_case_id", "")
         use_case_title = request_data.get("use_case_title", "")
@@ -110,24 +110,27 @@ async def get_recommended_datasets(
             )
             
             if datasets:
+                domain_context = f" for {problem_domain}" if problem_domain else ""
                 return APIResponse(
                     success=True,
                     data=datasets,
-                    message=f"Found {len(datasets)} relevant datasets from humanitarian sources for {problem_domain}"
+                    message=f"Found {len(datasets)} relevant datasets from humanitarian sources{domain_context}"
                 )
             else:
+                domain_context = f" in {problem_domain}" if problem_domain else ""
                 return APIResponse(
                     success=True,
                     data=[],
-                    message=f"No datasets found from humanitarian data sources for {problem_domain}. This is common for specialized AI projects. Consider collecting your own data or partnering with organizations that have relevant datasets."
+                    message=f"No datasets found from humanitarian data sources{domain_context}. This is common for specialized AI projects. Consider collecting your own data or partnering with organizations that have relevant datasets."
                 )
                 
         except Exception as e:
             logger.error(f"Dataset retrieval failed: {e}")
+            domain_context = f" for {problem_domain}" if problem_domain else ""
             return APIResponse(
                 success=True,
                 data=[],
-                message=f"Dataset search failed for {problem_domain}. The data discovery service may be temporarily unavailable."
+                message=f"Dataset search failed{domain_context}. The data discovery service may be temporarily unavailable."
             )
         
     except HTTPException:
@@ -140,7 +143,6 @@ async def get_recommended_datasets(
             await session_manager.close_all_sessions()
         except Exception as cleanup_error:
             logger.warning(f"Session cleanup error: {cleanup_error}")
-
 
 @router.post("/{project_id}/assess-infrastructure", response_model=APIResponse[InfrastructureAssessment])
 async def assess_infrastructure(
@@ -161,7 +163,7 @@ async def assess_infrastructure(
             ],
             'storage_data': [
                 'secure_cloud', 'organizational_servers', 'partner_systems', 
-                'government_systems', 'basic_digital', 'paper_based'
+                'government_systems', 'basic_digital', 'paper_based', 'local_storage'
             ],
             'internet_connectivity': [
                 'stable_broadband', 'satellite_internet', 'intermittent_connection', 

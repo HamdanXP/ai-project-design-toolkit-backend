@@ -20,24 +20,21 @@ class ProjectService:
         context: Optional[str] = None,
         tags: List[str] = None
     ) -> Project:
-        """Create a new project with comprehensive info extraction and ethical considerations"""
+        """Create new project with comprehensive information extraction and ethical consideration analysis"""
         try:
-            # Extract comprehensive project information using the new service
             project_info = await self.project_analysis.extract_project_info(description, context)
             
-            # Only problem_domain has fallback, others can be None
-            problem_domain = project_info.get("problem_domain", "general_humanitarian")
+            problem_domain = project_info.get("problem_domain")
             target_beneficiaries = project_info.get("target_beneficiaries")
             geographic_context = project_info.get("geographic_context")
             urgency_level = project_info.get("urgency_level")
             
             ethical_considerations_data = await core.rag_service.get_ethical_considerations_for_project(
                 project_description=description,
-                problem_domain=problem_domain,
+                problem_domain=problem_domain or "",
                 target_beneficiaries=target_beneficiaries or ""
             )
             
-            # Convert to EthicalConsideration objects
             ethical_considerations = [
                 EthicalConsideration(**consideration)
                 for consideration in ethical_considerations_data
@@ -51,24 +48,27 @@ class ProjectService:
                 status=ProjectStatus.CREATED,
                 current_phase="reflection",
                 problem_domain=problem_domain,
-                target_beneficiaries=target_beneficiaries,  # Can be None
-                geographic_context=geographic_context,      # Can be None
-                urgency_level=urgency_level,                # Can be None
+                target_beneficiaries=target_beneficiaries,
+                geographic_context=geographic_context,
+                urgency_level=urgency_level,
                 ethical_considerations=ethical_considerations,
                 ethical_considerations_acknowledged=False
             )
             
             await project.insert()
+            
+            domain_info = f"domain: {problem_domain}" if problem_domain else "no domain extracted"
+            beneficiaries_info = f"beneficiaries: {target_beneficiaries}" if target_beneficiaries else "no beneficiaries extracted"
+            
             logger.info(
-                f"Created project: {project.id} with domain: {problem_domain}, "
-                f"beneficiaries: {target_beneficiaries or 'not extracted'}, "
-                f"and {len(ethical_considerations)} ethical considerations"
+                f"Created project: {project.id} with {domain_info}, "
+                f"{beneficiaries_info}, and {len(ethical_considerations)} ethical considerations"
             )
             return project
         except Exception as e:
             logger.error(f"Failed to create project: {e}")
             raise
-    
+
     async def get_project(self, project_id: str) -> Optional[Project]:
         """Get project by ID"""
         try:
@@ -82,29 +82,31 @@ class ProjectService:
             return None
 
     async def get_project_domain(self, project_id: str) -> str:
-        """Get the problem domain for a project"""
+        """Retrieve the problem domain for a project with automatic extraction if needed"""
         try:
             project = await self.get_project(project_id)
             if not project:
-                return "general_humanitarian"
+                return ""
             
-            # Return stored domain or extract if not available
             if hasattr(project, 'problem_domain') and project.problem_domain:
                 return project.problem_domain
             else:
-                # Extract and store domain if not available
-                domain = await self.project_analysis.extract_problem_domain(
+                extracted_domain = await self.project_analysis.extract_problem_domain(
                     project.description, project.context
                 )
-                project.problem_domain = domain
-                await project.save()
-                logger.info(f"Extracted and stored domain for project {project_id}: {domain}")
-                return domain
+                if extracted_domain:
+                    project.problem_domain = extracted_domain
+                    await project.save()
+                    logger.info(f"Extracted and stored domain for project {project_id}: {extracted_domain}")
+                    return extracted_domain
+                else:
+                    logger.info(f"No domain could be extracted for project {project_id}")
+                    return ""
                 
         except Exception as e:
             logger.error(f"Failed to get project domain {project_id}: {e}")
-            return "general_humanitarian"
-
+            return ""
+    
     async def get_project_with_development_context(self, project_id: str) -> Optional[Project]:
         """Get project with all data needed for development phase"""
         try:
