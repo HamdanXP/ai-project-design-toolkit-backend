@@ -3,18 +3,19 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Any
 from config import settings
 from models.response import APIResponse
-from models.project import UseCase, Dataset, DeploymentEnvironment, DataSuitabilityAssessment
-from models.phase import ScopingRequest, ScopingResponse
+from models.project import Dataset, DeploymentEnvironment, DataSuitabilityAssessment
+from models.ethical_analysis import DatasetEthicsRequest, EthicalAnalysis
 from models.scoping import (
     ScopingCompletionRequest, 
-    ScopingCompletionResponse, 
     ProjectReadinessDecision,
     TechnicalInfrastructure,
     InfrastructureAssessment
 )
 from services.phase_services.scoping import ScopingService
 from services.project_service import ProjectService
+from services.ethical_analysis_service import EthicalAnalysisService
 from services.infrastructure_assessment_service import InfrastructureAssessmentService
+
 from api.dependencies import get_project_service, get_scoping_service
 from utils.session_manager import session_manager
 import logging
@@ -24,6 +25,9 @@ router = APIRouter(prefix="/scoping", tags=["scoping"])
 
 def get_infrastructure_service() -> InfrastructureAssessmentService:
     return InfrastructureAssessmentService()
+
+def get_ethical_analysis_service() -> EthicalAnalysisService:
+    return EthicalAnalysisService()
 
 @router.post("/{project_id}/use-cases", response_model=APIResponse[List[Dict[str, Any]]])
 async def get_similar_use_cases(
@@ -81,7 +85,6 @@ async def get_similar_use_cases(
             await session_manager.close_all_sessions()
         except Exception as cleanup_error:
             logger.warning(f"Session cleanup error: {cleanup_error}")
-
 
 @router.post("/{project_id}/datasets", response_model=APIResponse[List[Dataset]])
 async def get_recommended_datasets(
@@ -205,7 +208,40 @@ async def assess_infrastructure(
         except Exception as cleanup_error:
             logger.warning(f"Session cleanup error: {cleanup_error}")
 
-
+@router.post("/{project_id}/analyze-dataset-ethics", response_model=APIResponse[EthicalAnalysis])
+async def analyze_dataset_ethics(
+    project_id: str,
+    request: DatasetEthicsRequest,
+    project_service: ProjectService = Depends(get_project_service),
+    ethical_analysis_service: EthicalAnalysisService = Depends(get_ethical_analysis_service)
+):
+    try:
+        project = await project_service.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        analysis = await ethical_analysis_service.analyze_dataset_ethics(
+            project_id=project_id,
+            statistics=request.statistics
+        )
+        
+        return APIResponse(
+            success=True,
+            data=analysis,
+            message="Dataset ethical analysis completed successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to analyze dataset ethics: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            await session_manager.close_all_sessions()
+        except Exception as cleanup_error:
+            logger.warning(f"Session cleanup error: {cleanup_error}")
+            
 @router.post("/{project_id}/complete", response_model=APIResponse[Dict[str, Any]])
 async def complete_scoping_phase(
     project_id: str,
