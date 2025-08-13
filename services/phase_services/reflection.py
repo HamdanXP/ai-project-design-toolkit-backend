@@ -19,16 +19,13 @@ logger = logging.getLogger(__name__)
 
 class ReflectionService:
     def __init__(self):
-        # Humanitarian-focused thresholds
-        self.ethical_threshold = 0.7
-        self.ai_appropriateness_threshold = 0.7
-        self.overall_threshold = 0.7
+        self.ethical_threshold = 0.6
+        self.ai_appropriateness_threshold = 0.5
+        self.overall_threshold = 0.6
         
-        # Weights for humanitarian context
         self.ethical_weight = 0.7
         self.ai_appropriateness_weight = 0.3
 
-        # Core questions that are always relevant
         self.core_questions = [
             "problem_definition",
             "target_beneficiaries", 
@@ -38,7 +35,6 @@ class ReflectionService:
     async def get_reflection_questions(self, project_description: str) -> Dict[str, str]:
         """Generate contextual reflection questions with dynamic selection"""
         
-        # Get context from knowledge base
         context = await ctx.rag_service.get_context_for_reflection(project_description)
         
         prompt = f"""
@@ -84,17 +80,13 @@ class ReflectionService:
             response = await llm_service.analyze_text(project_description, prompt)
             questions_data = json.loads(response)
             
-            # Simple validation - ensure core questions exist
             for core_q in self.core_questions:
                 if core_q not in questions_data:
                     questions_data[core_q] = self._get_default_question(core_q)
             
-            # Ensure proper question count
             if len(questions_data) < 4:
-                # Add a generic fourth question
                 questions_data["project_context"] = "What specific context or environment will this project operate in?"
             elif len(questions_data) > 6:
-                # Keep core questions + first 3 additional
                 core_data = {k: v for k, v in questions_data.items() if k in self.core_questions}
                 additional_data = {k: v for k, v in questions_data.items() if k not in self.core_questions}
                 limited_additional = dict(list(additional_data.items())[:3])
@@ -140,14 +132,11 @@ class ReflectionService:
             if not project:
                 raise ValueError("Project not found")
             
-            # Return existing questions if they exist
             if project.reflection_questions:
                 return project.reflection_questions
             
-            # Generate new questions if none exist
             questions = await self.get_reflection_questions(project.description)
             
-            # Save questions to project
             project.reflection_questions = questions
             project.touch()
             await project.save()
@@ -165,38 +154,23 @@ class ReflectionService:
         questions: Dict[str, str]
     ) -> Dict[str, Any]:
         """
-        Completely rewritten assessment method with cleaner, more focused approach
+        Create comprehensive project readiness assessment
         """
         
-        # Get context from knowledge base
         context = await ctx.rag_service.get_context_for_reflection(project_description)
-        
-        # Build clean Q&A context
         qa_context = self._build_qa_context(answers, questions)
         
-        # STEP 1: Single, focused assessment
         assessment_data = await self._perform_core_assessment(
             project_description, qa_context, context
         )
         
-        # STEP 2: Generate alternatives if needed
         alternatives = await self._generate_alternatives_if_needed(
             project_description, qa_context, assessment_data["ai_recommendation"]
         )
         
-        # STEP 3: Intelligent post-processing
-        final_assessment = self._finalize_assessment(assessment_data, alternatives, answers, questions)
+        final_assessment = await self._finalize_assessment(assessment_data, alternatives, answers, questions)
         
-        # STEP 4: Create response objects
         return self._create_response_objects(final_assessment)
-
-    def _build_qa_context(self, answers: Dict[str, str], questions: Dict[str, str]) -> str:
-        """Build clean Q&A context string"""
-        qa_pairs = []
-        for key, answer in answers.items():
-            if key in questions and answer.strip():
-                qa_pairs.append(f"Q: {questions[key]}\nA: {answer.strip()}")
-        return "\n\n".join(qa_pairs)
 
     async def _perform_core_assessment(
         self, 
@@ -205,78 +179,173 @@ class ReflectionService:
         context: str
     ) -> Dict[str, Any]:
         """
-        Single, focused assessment prompt - much cleaner and more reliable
+        Single comprehensive assessment
         """
         
         prompt = f"""
-        You are evaluating a humanitarian AI project. Assess both ethical readiness and AI appropriateness.
+        You are assessing a humanitarian professional's readiness to learn about and develop AI projects responsibly. Focus on their awareness, engagement, and willingness to consider important factors rather than expecting expertise.
 
-        HUMANITARIAN CONTEXT: {context}
+        HUMANITARIAN KNOWLEDGE BASE: {context}
 
         PROJECT: {project_description}
 
-        RESPONSES:
+        USER RESPONSES (each 150-1200 characters, from non-technical humanitarian professionals):
         {qa_context}
 
-        ASSESSMENT CRITERIA:
+        ASSESSMENT FRAMEWORK:
 
-        1. ETHICAL READINESS (0.0-1.0):
-        - Understanding of potential harm to beneficiaries
-        - Community involvement and cultural sensitivity
-        - Privacy, consent, and data protection awareness
-        - Transparency and accountability considerations
-        - Bias prevention and fairness awareness
+        ETHICAL AWARENESS (0.0-1.0) - Look for recognition and engagement with:
+        • Harm consideration: Do they acknowledge potential negative impacts, even if not detailed?
+        • Beneficiary awareness: Do they show consideration for affected communities?
+        • Cultural sensitivity: Do they recognize the importance of local context?
+        • Data responsibility: Do they show awareness of privacy and consent issues?
+        • Learning mindset: Are they open to ethical considerations and feedback?
 
-        2. AI APPROPRIATENESS (0.0-1.0):
-        - Is AI genuinely needed vs simpler solutions?
-        - Technical complexity justified by benefits?
-        - Sufficient data and resources available?
-        - Team prepared for AI implementation?
+        AI APPROPRIATENESS (0.0-1.0) - Evaluate practical thinking about:
+        • Problem understanding: Do they articulate why AI might help their specific situation?
+        • Resource awareness: Do they recognize what they need (data, skills, support)?
+        • Complexity recognition: Do they understand AI projects require effort and expertise?
+        • Alternative consideration: Are they open to simpler solutions if appropriate?
 
-        SCORING (be realistic for humanitarian context):
-        - 0.0-0.4: Poor (major gaps, vague responses, little understanding)
-        - 0.5-0.6: Fair (basic understanding, some gaps, needs improvement) 
-        - 0.7-0.8: Good (solid understanding, minor gaps, ready with support)
-        - 0.9-1.0: Excellent (comprehensive, well-informed, clearly ready)
+        SCORING GUIDE for learning professionals:
+        0.6-1.0: Shows thoughtful engagement and awareness of key considerations (ready to proceed with guidance)
+        0.4-0.5: Basic engagement but needs more reflection on important factors
+        0.0-0.3: Minimal engagement or awareness of humanitarian AI responsibilities
 
-        RETURN JSON (no markdown, no extra text):
+        ASSESSMENT FOCUS:
+        Good indicators: Acknowledges complexity, asks questions, shows concern for beneficiaries, recognizes need for help
+        Concerning: Dismisses ethical concerns, unrealistic expectations, no consideration of harm or alternatives
+
+        Return JSON focusing on readiness to learn responsibly:
         {{
             "ethical_score": 0.0,
-            "ethical_summary": "Specific assessment of ethical readiness based on responses",
+            "ethical_summary": "Assessment of their ethical awareness and engagement with humanitarian considerations",
             "ai_appropriateness_score": 0.0,
-            "ai_appropriateness_summary": "Specific assessment of AI necessity and feasibility",
+            "ai_appropriateness_summary": "Assessment of their practical thinking about AI necessity and complexity", 
             "ai_recommendation": "highly_appropriate|appropriate|questionable|not_appropriate",
-            "overall_summary": "Combined assessment of project readiness",
-            "key_concerns": [
-                "Specific concern 1",
-                "Specific concern 2"
-            ],
-            "actionable_next_steps": [
-                "Specific actionable step 1",
-                "Specific actionable step 2", 
-                "Specific actionable step 3"
-            ]
+            "overall_summary": "Overall readiness assessment focused on responsible learning approach",
+            "key_concerns": ["Areas where they need more awareness or consideration"],
+            "actionable_next_steps": ["Specific learning steps to strengthen their approach"]
         }}
         """
         
-        try:
-            response = await llm_service.analyze_text("", prompt)
-            cleaned_response = self._clean_json_response(response)
-            return json.loads(cleaned_response)
+        response = await llm_service.analyze_text("", prompt)
+        cleaned_response = self._clean_json_response(response)
+        return json.loads(cleaned_response)
+
+    async def _analyze_answer_quality(
+        self, 
+        answers: Dict[str, str], 
+        questions: Dict[str, str],
+        qa_context: str
+    ) -> List[Dict[str, Any]]:
+        """
+        LLM-based analysis of answer quality for question flagging
+        """
+        
+        if not answers or not questions:
+            return []
             
-        except Exception as e:
-            logger.error(f"Core assessment failed: {e}")
-            # Return minimal valid structure rather than failing completely
-            return {
-                "ethical_score": 0.3,
-                "ethical_summary": "Assessment failed - please review responses",
-                "ai_appropriateness_score": 0.3,
-                "ai_appropriateness_summary": "Assessment failed - unable to evaluate AI appropriateness",
-                "ai_recommendation": "questionable",
-                "overall_summary": "Assessment could not be completed due to technical issues",
-                "key_concerns": ["Assessment system temporarily unavailable"],
-                "actionable_next_steps": ["Please try again", "Ensure all questions are answered thoroughly"]
-            }
+        prompt = f"""
+        Review these humanitarian project reflection responses for quality and completeness. Flag responses that show gaps in understanding or awareness.
+
+        QUESTIONS AND ANSWERS:
+        {qa_context}
+
+        For each answer, assess if it adequately addresses the question's intent. Use these severity levels:
+
+        HIGH SEVERITY (critical gaps):
+        • Dismissive attitudes toward ethical considerations or potential harms
+        • Unrealistic expectations showing no understanding of AI complexity
+        • Complete avoidance of the question or purely superficial responses
+        • No awareness of vulnerable populations when specifically asked about them
+
+        MEDIUM SEVERITY (notable gaps):
+        • Vague responses that partially address the question but lack depth
+        • Shows some awareness but misses important humanitarian considerations
+        • Limited understanding of complexity or potential challenges
+        • Decent intent but insufficient consideration of key factors
+
+        LOW SEVERITY (minor gaps):
+        • Generally good response but could benefit from more detail
+        • Shows understanding but minor areas for improvement
+        • Good awareness but could be more specific about implementation
+
+        DON'T FLAG (good responses):
+        • Thoughtful consideration of issues, even if not expert-level
+        • Acknowledgment of uncertainty or need for help
+        • Shows awareness of potential problems or complexity
+        • Demonstrates genuine concern for beneficiaries
+
+        Return JSON array of flags only for responses needing attention:
+        [
+            {{
+                "question_key": "question_identifier",
+                "issue": "Specific description of the concern",
+                "severity": "low|medium|high",
+                "category": "ethical"
+            }}
+        ]
+
+        Return empty array [] if no responses need flagging.
+        """
+        
+        response = await llm_service.analyze_text("", prompt)
+        cleaned_response = self._clean_json_response(response)
+        
+        try:
+            flags = json.loads(cleaned_response)
+            return flags if isinstance(flags, list) else []
+        except json.JSONDecodeError:
+            return []
+
+    async def _finalize_assessment(
+        self, 
+        assessment_data: Dict[str, Any],
+        alternatives: Dict[str, Any] | None,
+        answers: Dict[str, str],
+        questions: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """
+        Finalize assessment and create response structure
+        """
+        
+        ethical_score = float(assessment_data.get("ethical_score", 0.0))
+        ai_appropriateness_score = float(assessment_data.get("ai_appropriateness_score", 0.0))
+        
+        overall_score = (ethical_score * self.ethical_weight) + (ai_appropriateness_score * self.ai_appropriateness_weight)
+        
+        proceed_recommendation = (
+            ethical_score >= self.ethical_threshold and
+            ai_appropriateness_score >= self.ai_appropriateness_threshold and
+            overall_score >= self.overall_threshold
+        )
+        
+        qa_context = self._build_qa_context(answers, questions)
+        question_flags = await self._analyze_answer_quality(answers, questions, qa_context)
+        
+        return {
+            "ethical_score": ethical_score,
+            "ethical_summary": assessment_data.get("ethical_summary", ""),
+            "ai_appropriateness_score": ai_appropriateness_score,
+            "ai_appropriateness_summary": assessment_data.get("ai_appropriateness_summary", ""),
+            "ai_recommendation": assessment_data.get("ai_recommendation", "appropriate"),
+            "alternative_solutions": alternatives,
+            "overall_readiness_score": overall_score,
+            "proceed_recommendation": proceed_recommendation,
+            "summary": assessment_data.get("overall_summary", ""),
+            "actionable_recommendations": assessment_data.get("actionable_next_steps", []),
+            "question_flags": question_flags,
+            "threshold_met": overall_score >= self.overall_threshold
+        }
+
+    def _build_qa_context(self, answers: Dict[str, str], questions: Dict[str, str]) -> str:
+        """Build clean Q&A context string"""
+        qa_pairs = []
+        for key, answer in answers.items():
+            if key in questions and answer.strip():
+                qa_pairs.append(f"Q: {questions[key]}\nA: {answer.strip()}")
+        return "\n\n".join(qa_pairs)
 
     async def _generate_alternatives_if_needed(
         self, 
@@ -319,119 +388,10 @@ class ReflectionService:
             logger.warning(f"Alternative generation failed: {e}")
             return None
 
-    def _finalize_assessment(
-        self, 
-        assessment_data: Dict[str, Any], 
-        alternatives: Dict[str, Any] | None,
-        answers: Dict[str, str],
-        questions: Dict[str, str]
-    ) -> Dict[str, Any]:
-        """
-        Intelligent post-processing and finalization
-        """
-        
-        ethical_score = float(assessment_data.get("ethical_score", 0.0))
-        ai_appropriateness_score = float(assessment_data.get("ai_appropriateness_score", 0.0))
-        
-        # Calculate weighted overall score
-        overall_score = (ethical_score * self.ethical_weight) + (ai_appropriateness_score * self.ai_appropriateness_weight)
-        
-        # Determine proceed recommendation based on realistic thresholds
-        proceed_recommendation = (
-            ethical_score >= self.ethical_threshold and
-            ai_appropriateness_score >= self.ai_appropriateness_threshold and
-            overall_score >= self.overall_threshold
-        )
-        
-        # Generate question flags based on answer quality
-        question_flags = self._analyze_answer_quality(answers, questions, assessment_data.get("key_concerns", []))
-        
-        # Create final assessment structure
-        final_assessment = {
-            "ethical_score": ethical_score,
-            "ethical_summary": assessment_data.get("ethical_summary", ""),
-            "ai_appropriateness_score": ai_appropriateness_score,
-            "ai_appropriateness_summary": assessment_data.get("ai_appropriateness_summary", ""),
-            "ai_recommendation": assessment_data.get("ai_recommendation", "appropriate"),
-            "alternative_solutions": alternatives,
-            "overall_readiness_score": overall_score,
-            "proceed_recommendation": proceed_recommendation,
-            "summary": assessment_data.get("overall_summary", ""),
-            "actionable_recommendations": assessment_data.get("actionable_next_steps", []),
-            "question_flags": question_flags,
-            "threshold_met": overall_score >= self.overall_threshold
-        }
-        
-        logger.info(f"Final assessment: ethical={ethical_score:.2f}, ai_app={ai_appropriateness_score:.2f}, overall={overall_score:.2f}, proceed={proceed_recommendation}")
-        
-        return final_assessment
-
-    def _analyze_answer_quality(
-        self, 
-        answers: Dict[str, str], 
-        questions: Dict[str, str],
-        key_concerns: List[str]
-    ) -> List[Dict[str, Any]]:
-        """
-        Analyze answer quality to generate question flags
-        """
-        flags = []
-        
-        for key, answer in answers.items():
-            if key not in questions:
-                continue
-                
-            answer = answer.strip()
-            
-            # Flag very short answers
-            if len(answer) < 100:
-                flags.append({
-                    "question_key": key,
-                    "issue": "Response is too brief and lacks sufficient detail for this humanitarian context",
-                    "severity": "medium",
-                    "category": "ethical"
-                })
-            
-            # Flag answers that seem to avoid the question
-            question_lower = questions[key].lower()
-            answer_lower = answer.lower()
-            
-            # Check for key humanitarian terms based on question type
-            if "harm" in question_lower or "risk" in question_lower or "negative" in question_lower:
-                if not any(term in answer_lower for term in ["harm", "risk", "negative", "concern", "impact", "effect"]):
-                    flags.append({
-                        "question_key": key,
-                        "issue": "Response does not adequately address potential harms or risks",
-                        "severity": "high",
-                        "category": "ethical"
-                    })
-            
-            if "beneficiar" in question_lower or "who" in question_lower:
-                if not any(term in answer_lower for term in ["people", "community", "beneficiar", "user", "target", "vulnerable"]):
-                    flags.append({
-                        "question_key": key,
-                        "issue": "Response lacks clear identification of beneficiaries or target population",
-                        "severity": "high",
-                        "category": "ethical"
-                    })
-            
-            # Flag based on key concerns from LLM assessment
-            for concern in key_concerns:
-                if any(term in concern.lower() for term in [key.replace("_", " "), questions[key][:20].lower()]):
-                    flags.append({
-                        "question_key": key,
-                        "issue": concern,
-                        "severity": "medium",
-                        "category": "ethical"
-                    })
-        
-        return flags
-
     def _clean_json_response(self, response: str) -> str:
         """Clean and extract JSON from LLM response"""
         response = response.strip()
         
-        # Remove markdown formatting
         if response.startswith('```json'):
             response = response[7:]
         elif response.startswith('```'):
@@ -439,19 +399,20 @@ class ReflectionService:
         if response.endswith('```'):
             response = response[:-3]
         
-        # Extract JSON object
         first_brace = response.find('{')
         last_brace = response.rfind('}')
         
         if first_brace != -1 and last_brace != -1:
             response = response[first_brace:last_brace + 1]
         
+        # Fix quote issues in JSON by cleaning malformed quotes
+        response = response.replace('": "', '": "').replace('":', '":')
+        
         return response.strip()
 
     def _create_response_objects(self, final_assessment: Dict[str, Any]) -> Dict[str, Any]:
         """Create final response objects for the API"""
         
-        # Convert question flags to proper objects
         converted_flags = []
         for flag in final_assessment["question_flags"]:
             try:
@@ -464,7 +425,6 @@ class ReflectionService:
             except Exception as e:
                 logger.warning(f"Failed to convert question flag: {e}")
 
-        # Convert alternative solutions if present
         alt_solutions_obj = None
         if final_assessment["alternative_solutions"]:
             alt_data = final_assessment["alternative_solutions"]
@@ -476,7 +436,6 @@ class ReflectionService:
                 reasoning=alt_data.get("reasoning", "")
             )
 
-        # Create ProjectReadinessAssessment object
         project_readiness_assessment = ProjectReadinessAssessment(
             ethical_score=final_assessment["ethical_score"],
             ethical_summary=final_assessment["ethical_summary"],
@@ -492,7 +451,6 @@ class ReflectionService:
             threshold_met=final_assessment["threshold_met"]
         )
 
-        # Create legacy EthicalAssessment for backward compatibility
         ethical_assessment = EthicalAssessment(
             score=final_assessment["ethical_score"],
             concerns=[],
@@ -500,7 +458,6 @@ class ReflectionService:
             approved=final_assessment["ethical_score"] >= self.ethical_threshold
         )
 
-        # Return complete response
         return {
             "project_readiness_assessment": project_readiness_assessment,
             "ethical_assessment": ethical_assessment,
@@ -521,22 +478,19 @@ class ReflectionService:
     async def get_reflection_questions_with_guidance(self, project_description: str) -> Dict[str, Any]:
         """Generate contextual reflection questions with targeted guidance sources"""
         
-        # First, get the base questions as before
         questions_data = await self.get_reflection_questions(project_description)
         
-        # Now get targeted guidance sources for each specific question
         questions_with_guidance = {}
         
         for question_key, question_text in questions_data.items():
             try:
                 logger.info(f"Getting guidance for question: {question_text[:50]}...")
                 
-                # Get guidance sources for this specific question text
                 guidance_sources = await ctx.rag_service.get_question_specific_guidance_sources(
                     question_text=question_text,
                     question_area=question_key,
                     project_description=project_description,
-                    max_sources=2  # Only get the 2 most relevant sources
+                    max_sources=2
                 )
                 
                 questions_with_guidance[question_key] = {
@@ -548,7 +502,6 @@ class ReflectionService:
                 
             except Exception as e:
                 logger.warning(f"Failed to get guidance for {question_key}: {e}")
-                # Fallback without guidance
                 questions_with_guidance[question_key] = {
                     "question": question_text,
                     "guidance_sources": []
@@ -563,9 +516,7 @@ class ReflectionService:
             if not project:
                 raise ValueError("Project not found")
             
-            # Check if we have enhanced questions with guidance stored
             if project.reflection_questions_with_guidance:
-                # Convert stored EnhancedReflectionQuestion objects back to dict format for API
                 return {
                     "questions": {
                         key: {
@@ -577,16 +528,13 @@ class ReflectionService:
                     "has_guidance": True
                 }
             
-            # Generate new questions with targeted guidance if none exist
             logger.info(f"Generating new reflection questions with guidance for project {project_id}")
             questions_with_guidance_raw = await self.get_reflection_questions_with_guidance(project.description)
             
-            # Convert to proper model format for storage
             enhanced_questions = {}
             simple_questions = {}
             
             for key, data in questions_with_guidance_raw.items():
-                # Create GuidanceSource objects only for relevant sources
                 guidance_sources = []
                 for source_data in data.get("guidance_sources", []):
                     try:
@@ -595,16 +543,13 @@ class ReflectionService:
                         logger.warning(f"Failed to create GuidanceSource: {e}")
                         continue
                 
-                # Create EnhancedReflectionQuestion object
                 enhanced_questions[key] = ReflectionQuestion(
                     question=data["question"],
                     guidance_sources=guidance_sources
                 )
                 
-                # Maintain backward compatibility
                 simple_questions[key] = data["question"]
             
-            # Save to project
             project.reflection_questions_with_guidance = enhanced_questions
             project.reflection_questions = simple_questions
             project.touch()
@@ -612,7 +557,6 @@ class ReflectionService:
             
             logger.info(f"Saved {len(enhanced_questions)} questions with guidance for project {project_id}")
             
-            # Return format expected by frontend
             return {
                 "questions": questions_with_guidance_raw,
                 "has_guidance": True
@@ -620,7 +564,6 @@ class ReflectionService:
             
         except Exception as e:
             logger.error(f"Failed to get/create reflection questions with guidance: {e}")
-            # Fallback to simple questions without guidance
             try:
                 simple_questions = await self.get_or_create_reflection_questions(project_id)
                 return {
@@ -633,4 +576,3 @@ class ReflectionService:
             except Exception as fallback_error:
                 logger.error(f"Fallback also failed: {fallback_error}")
                 raise
-            

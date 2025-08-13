@@ -32,7 +32,7 @@ class EthicalAnalysisService:
                 target_beneficiaries
             )
             
-            analysis_prompt = self._build_targeted_analysis_prompt(
+            analysis_prompt = await self._build_targeted_analysis_prompt(
                 project.description,
                 problem_domain,
                 target_beneficiaries,
@@ -69,72 +69,120 @@ class EthicalAnalysisService:
         except Exception as e:
             logger.warning(f"Failed to get ethical context: {e}")
             return ""
-    
-    def _classify_columns_semantic(self, column_analysis: list) -> Dict[str, Any]:
-        classifications = {}
-        administrative_cols = []
-        statistical_cols = []
-        potential_identifier_cols = []
+
+    async def _classify_columns_semantic(self, column_analysis: list) -> Dict[str, Any]:
+        """
+        LLM-based semantic column classification for accurate privacy assessment
+        """
         
+        if not column_analysis:
+            return {
+                "classifications": {},
+                "dataset_type": "unknown",
+                "privacy_context": "Unable to classify columns",
+                "administrative_columns": [],
+                "statistical_columns": [],
+                "identifier_columns": []
+            }
+        
+        column_summary = []
         for col in column_analysis:
-            name = col.get('name', '').lower()
+            name = col.get('name', '')
             uniqueness = col.get('uniqueCount', 0) / max(col.get('totalRows', 1), 1)
+            col_type = col.get('type', 'unknown')
             
-            if any(term in name for term in ['country', 'admin', 'region', 'province', 'state', 'district', 'latitude', 'longitude']):
-                classifications[col.get('name', '')] = {
-                    "category": "ADMINISTRATIVE_GEOGRAPHIC",
-                    "privacy_risk": "low",
-                    "reasoning": "Public administrative boundary data"
-                }
-                administrative_cols.append(col.get('name', ''))
-            elif any(term in name for term in ['value', 'total', 'count', 'sum', 'avg', 'indicator', 'metric', 'aggregation']):
-                classifications[col.get('name', '')] = {
-                    "category": "STATISTICAL_MEASURE", 
-                    "privacy_risk": "low",
-                    "reasoning": "Aggregated statistical data"
-                }
-                statistical_cols.append(col.get('name', ''))
-            elif any(term in name for term in ['name', 'id', 'identifier', 'email', 'phone']) and uniqueness > 0.8:
-                classifications[col.get('name', '')] = {
-                    "category": "PERSONAL_IDENTIFIER",
-                    "privacy_risk": "high",
-                    "reasoning": f"High uniqueness ({uniqueness:.0%}) suggests personal identifiers"
-                }
-                potential_identifier_cols.append(col.get('name', ''))
-            elif any(term in name for term in ['date', 'time', 'year', 'month']):
-                classifications[col.get('name', '')] = {
-                    "category": "TEMPORAL",
-                    "privacy_risk": "low",
-                    "reasoning": "Temporal data for analysis"
+            column_summary.append(f"'{name}': {col_type}, {uniqueness:.0%} unique values")
+        
+        prompt = f"""Classify these dataset columns for humanitarian data privacy assessment.
+
+COLUMNS TO CLASSIFY:
+{chr(10).join(column_summary)}
+
+For each column, determine:
+1. CATEGORY: ADMINISTRATIVE_GEOGRAPHIC | STATISTICAL_MEASURE | PERSONAL_IDENTIFIER | TEMPORAL | CATEGORICAL_ATTRIBUTE
+2. PRIVACY_RISK: low | medium | high
+
+CLASSIFICATION GUIDELINES:
+- ADMINISTRATIVE_GEOGRAPHIC (low risk): Geographic boundaries, administrative divisions, public location data
+- STATISTICAL_MEASURE (low risk): Counts, amounts, percentages, measurements, aggregated metrics  
+- PERSONAL_IDENTIFIER (high risk): Names, IDs, contact info, unique personal identifiers
+- TEMPORAL (low risk): Dates, times, temporal markers
+- CATEGORICAL_ATTRIBUTE (low/medium risk): Descriptive categories, low=common categories, medium=potentially identifying
+
+HUMANITARIAN CONTEXT: Assess for public administrative data vs individual records.
+
+Return JSON:
+{{
+    "column_classifications": {{
+        "column_name": {{"category": "CATEGORY", "privacy_risk": "low|medium|high", "reasoning": "brief reason"}},
+        ...
+    }},
+    "dataset_assessment": {{
+        "dataset_type": "administrative_statistics|individual_records|aggregated_data",
+        "privacy_context": "Assessment of overall privacy risk pattern",
+        "administrative_columns": ["list of admin columns"],
+        "statistical_columns": ["list of statistical columns"], 
+        "identifier_columns": ["list of identifier columns"]
+    }}
+}}"""
+        
+        try:
+            response = await llm_service.analyze_text("", prompt)
+            cleaned_response = self._clean_json_response(response)
+            result = json.loads(cleaned_response)
+            
+            if "column_classifications" in result and "dataset_assessment" in result:
+                return {
+                    "classifications": result["column_classifications"],
+                    "dataset_type": result["dataset_assessment"].get("dataset_type", "aggregated_data"),
+                    "privacy_context": result["dataset_assessment"].get("privacy_context", "Privacy assessment completed"),
+                    "administrative_columns": result["dataset_assessment"].get("administrative_columns", []),
+                    "statistical_columns": result["dataset_assessment"].get("statistical_columns", []),
+                    "identifier_columns": result["dataset_assessment"].get("identifier_columns", [])
                 }
             else:
-                risk_level = "low" if uniqueness < 0.5 else "medium"
-                classifications[col.get('name', '')] = {
-                    "category": "CATEGORICAL_ATTRIBUTE",
-                    "privacy_risk": risk_level,
-                    "reasoning": f"Categorical data with {uniqueness:.0%} uniqueness"
-                }
+                raise ValueError("Invalid response structure")
+                
+        except Exception as e:
+            logger.warning(f"LLM column classification failed: {e}")
+            return self._fallback_classification(column_analysis)
+
+    def _fallback_classification(self, column_analysis: list) -> Dict[str, Any]:
+        """
+        Minimal fallback when LLM classification fails
+        """
+        classifications = {}
         
-        if len(administrative_cols) >= 2 and len(statistical_cols) >= 1:
-            dataset_type = "administrative_statistics"
-            privacy_context = "Low privacy risk - primarily administrative and statistical data"
-        elif len(potential_identifier_cols) > 0:
-            dataset_type = "individual_records"
-            privacy_context = "High privacy risk - contains potential personal identifiers"
-        else:
-            dataset_type = "aggregated_data"
-            privacy_context = "Medium privacy risk - aggregated data with some identifying patterns"
+        for col in column_analysis:
+            name = col.get('name', '')
+            uniqueness = col.get('uniqueCount', 0) / max(col.get('totalRows', 1), 1)
+            
+            if uniqueness > 0.95:
+                risk = "high"
+                category = "PERSONAL_IDENTIFIER"
+            elif uniqueness < 0.1:
+                risk = "low" 
+                category = "CATEGORICAL_ATTRIBUTE"
+            else:
+                risk = "medium"
+                category = "CATEGORICAL_ATTRIBUTE"
+                
+            classifications[name] = {
+                "category": category,
+                "privacy_risk": risk,
+                "reasoning": f"Fallback classification based on {uniqueness:.0%} uniqueness"
+            }
         
         return {
             "classifications": classifications,
-            "dataset_type": dataset_type,
-            "privacy_context": privacy_context,
-            "administrative_columns": administrative_cols,
-            "statistical_columns": statistical_cols,
-            "identifier_columns": potential_identifier_cols
+            "dataset_type": "aggregated_data",
+            "privacy_context": "Basic classification completed - detailed analysis unavailable",
+            "administrative_columns": [],
+            "statistical_columns": [],
+            "identifier_columns": []
         }
 
-    def _build_targeted_analysis_prompt(
+    async def _build_targeted_analysis_prompt(
         self,
         project_description: str,
         problem_domain: str,
@@ -146,7 +194,7 @@ class EthicalAnalysisService:
         quality_assessment = statistics.get('qualityAssessment', {})
         column_analysis = statistics.get('columnAnalysis', [])
         
-        column_semantics = self._classify_columns_semantic(column_analysis)
+        column_semantics = await self._classify_columns_semantic(column_analysis)
         domain_guidance = self._get_domain_guidance(problem_domain)
         
         key_columns = []
@@ -160,7 +208,7 @@ TARGET: {target_beneficiaries}
 DATASET: {column_semantics['dataset_type']} with {basic_metrics.get('totalRows', 0):,} rows, {basic_metrics.get('totalColumns', 0)} columns
 
 COLUMN ANALYSIS:
-{chr(10).join(key_columns[:8])}
+{chr(10).join(key_columns)}
 
 DATA QUALITY METRICS:
 - Completeness: {quality_assessment.get('completenessScore', 0)}%
@@ -248,7 +296,6 @@ Return this exact JSON structure:
                 else:
                     raise ValueError("No valid JSON found in response")
             
-            # Ensure scoring breakdown exists and calculate suitability score
             if 'scoring_breakdown' in data and data['scoring_breakdown']:
                 total_points = 0
                 for breakdown_item in data['scoring_breakdown'].values():
@@ -281,3 +328,22 @@ Return this exact JSON structure:
         except Exception as e:
             logger.error(f"Failed to parse analysis response: {e}")
             raise ValueError(f"Invalid AI analysis response format: {e}")
+
+    def _clean_json_response(self, response: str) -> str:
+        """Clean and extract JSON from LLM response"""
+        response = response.strip()
+        
+        if response.startswith('```json'):
+            response = response[7:]
+        elif response.startswith('```'):
+            response = response[3:]
+        if response.endswith('```'):
+            response = response[:-3]
+        
+        first_brace = response.find('{')
+        last_brace = response.rfind('}')
+        
+        if first_brace != -1 and last_brace != -1:
+            response = response[first_brace:last_brace + 1]
+        
+        return response.strip()

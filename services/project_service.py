@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from models.project import EthicalConsideration, Project, ProjectReadinessAssessment, ProjectStatus, EthicalAssessment, UseCase, Dataset, DataSuitabilityAssessment, DeploymentEnvironment, EvaluationResults
+from models.project import EthicalConsideration, Project, ProjectReadinessAssessment, ProjectStatus, EthicalAssessment, UseCase, Dataset, DataSuitabilityAssessment, EvaluationResults
 from core.exceptions import ProjectNotFoundError
 from services.project_analysis_service import ProjectAnalysisService
 from bson import ObjectId
@@ -215,7 +215,6 @@ class ProjectService:
         selected_use_case: Optional[UseCase] = None,
         selected_dataset: Optional[Dataset] = None,
         data_suitability_assessment: Optional[DataSuitabilityAssessment] = None,
-        deployment_environment: Optional[DeploymentEnvironment] = None,
         evaluation_results: Optional[EvaluationResults] = None
     ):
         """Update project phase data and advance phase if needed"""
@@ -250,10 +249,7 @@ class ProjectService:
                 
             if data_suitability_assessment:
                 project.data_suitability_assessment = data_suitability_assessment
-                
-            if deployment_environment:
-                project.deployment_environment = deployment_environment
-                
+                                
             if evaluation_results:
                 project.evaluation_results = evaluation_results
             
@@ -294,6 +290,11 @@ class ProjectService:
             if not project:
                 return None
             
+            # Extract technical infrastructure from scoping data
+            technical_infrastructure = None
+            if project.scoping_data and 'technical_infrastructure' in project.scoping_data:
+                technical_infrastructure = project.scoping_data['technical_infrastructure']
+            
             # Extract key information for development
             summary = {
                 "project_info": {
@@ -305,7 +306,7 @@ class ProjectService:
                 },
                 "selected_use_case": project.selected_use_case.dict() if project.selected_use_case else None,
                 "selected_dataset": project.selected_dataset.dict() if project.selected_dataset else None,
-                "deployment_environment": project.deployment_environment.dict() if project.deployment_environment else None,
+                "technical_infrastructure": technical_infrastructure,
                 "ethical_assessment": project.ethical_assessment.dict() if project.ethical_assessment else None,
                 "reflection_insights": self._extract_reflection_insights(project.reflection_data),
                 "scoping_insights": self._extract_scoping_insights(project.scoping_data)
@@ -348,7 +349,8 @@ class ProjectService:
             "feasibility_level": scoping_data.get("feasibility_summary", {}).get("feasibility_level", "medium"),
             "data_suitability": scoping_data.get("data_suitability", {}).get("suitability_level", "moderate"),
             "key_constraints": scoping_data.get("feasibility_summary", {}).get("key_constraints", []),
-            "ready_to_proceed": scoping_data.get("ready_to_proceed", False)
+            "ready_to_proceed": scoping_data.get("ready_to_proceed", False),
+            "technical_infrastructure": scoping_data.get("technical_infrastructure", {})
         }
 
     async def get_ethical_considerations(self, project_id: str) -> List[Dict[str, Any]]:

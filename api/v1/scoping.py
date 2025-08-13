@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Any
 from config import settings
 from models.response import APIResponse
-from models.project import Dataset, DeploymentEnvironment, DataSuitabilityAssessment
+from models.project import Dataset, DataSuitabilityAssessment
 from models.ethical_analysis import DatasetEthicsRequest, EthicalAnalysis
 from models.scoping import (
     ScopingCompletionRequest, 
@@ -253,29 +253,7 @@ async def complete_scoping_phase(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        deployment_environment = DeploymentEnvironment(
-            computing_resources=scoping_data.technical_infrastructure.computing_resources,
-            reliable_internet_connection=scoping_data.technical_infrastructure.internet_connectivity in [
-                "stable_broadband", "satellite_internet", "intermittent_connection"
-            ],
-            local_technology_setup=scoping_data.technical_infrastructure.deployment_environment in [
-                "organizational_infrastructure", "hybrid_approach", "offline_systems"
-            ],
-            
-            project_budget="not_specified",
-            project_timeline="not_specified", 
-            team_size="not_specified",
-            ai_ml_experience="not_specified",
-            technical_skills="not_specified",
-            learning_training_capacity=None,
-            stakeholder_buy_in="not_specified",
-            change_management_readiness=None,
-            data_governance="not_specified",
-            regulatory_requirements="not_specified",
-            external_partnerships=None,
-            long_term_sustainability_plan=None
-        )
-        
+        # Create data suitability assessment
         data_suitability_assessment = None
         if scoping_data.suitability_checks:
             suitability_dict = {c.get("id"): c.get("answer") for c in scoping_data.suitability_checks}
@@ -340,6 +318,7 @@ async def complete_scoping_phase(
                 logger.warning(f"Failed to create data suitability assessment: {e}")
                 data_suitability_assessment = None
         
+        # Prepare complete scoping data - store technical infrastructure instead of deployment environment
         complete_scoping_data = {
             "active_step": scoping_data.active_step,
             "selected_use_case": scoping_data.selected_use_case.dict() if scoping_data.selected_use_case else None,
@@ -353,6 +332,7 @@ async def complete_scoping_phase(
             "completed_at": datetime.utcnow().isoformat(),
         }
         
+        # Update project phase without deployment_environment
         await project_service.update_project_phase(
             project_id=project_id,
             phase="scoping",
@@ -361,8 +341,7 @@ async def complete_scoping_phase(
             selected_use_case=scoping_data.selected_use_case,
             selected_dataset=scoping_data.selected_dataset,
             data_suitability_assessment=data_suitability_assessment,
-            deployment_environment=deployment_environment
-        )
+            )
         
         final_decision = ProjectReadinessDecision(
             ready_to_proceed=scoping_data.ready_to_proceed,
@@ -420,7 +399,6 @@ async def get_scoping_status(
             "selected_use_case": project.selected_use_case.dict() if project.selected_use_case else None,
             "selected_dataset": project.selected_dataset.dict() if project.selected_dataset else None,
             "data_suitability_assessment": project.data_suitability_assessment.dict() if project.data_suitability_assessment else None,
-            "deployment_environment": project.deployment_environment.dict() if project.deployment_environment else None,
         }
         
         return APIResponse(data=status_data)

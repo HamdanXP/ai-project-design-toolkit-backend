@@ -22,14 +22,8 @@ class DeploymentStrategy(str, Enum):
     API_INTEGRATION = "api_integration"
     HYBRID_APPROACH = "hybrid_approach"
     EDGE_COMPUTING = "edge_computing"
-    FEDERATED_LEARNING = "federated_learning"
-    SERVERLESS = "serverless"
-
-class ComplexityLevel(str, Enum):
-    SIMPLE = "simple"
-    MODERATE = "moderate"
-    ADVANCED = "advanced"
-    ENTERPRISE = "enterprise"
+    OFFLINE_FIRST = "offline_first"
+    MOBILE_OPTIMIZED = "mobile_optimized"
 
 class IndexDomain(Enum):
     """Domain types for specialized indexes"""

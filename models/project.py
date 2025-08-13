@@ -102,32 +102,6 @@ class Dataset(BaseModel):
     ethical_concerns: List[str] = []
     suitability_score: Optional[float] = None
 
-class DeploymentEnvironment(BaseModel):
-    # Resources & Budget
-    project_budget: str
-    project_timeline: str 
-    team_size: str
-    
-    # Technical Infrastructure  
-    computing_resources: str 
-    reliable_internet_connection: bool
-    local_technology_setup: bool
-    
-    # Team Expertise
-    ai_ml_experience: str
-    technical_skills: str
-    learning_training_capacity: bool
-    
-    # Organizational Readiness
-    stakeholder_buy_in: str
-    change_management_readiness: bool
-    data_governance: str
-    
-    # External Factors
-    regulatory_requirements: str
-    external_partnerships: bool
-    long_term_sustainability_plan: bool
-
 class DataSuitabilityAssessment(BaseModel):
     data_completeness: DataAssessmentResponse
     population_representativeness: RepresentativenessResponse
@@ -208,11 +182,9 @@ class Project(Document):
     data_suitability_assessment: Optional[DataSuitabilityAssessment] = None
     selected_use_case: Optional[UseCase] = None
     selected_dataset: Optional[Dataset] = None
-    deployment_environment: Optional[DeploymentEnvironment] = None    
     evaluation_results: Optional[EvaluationResults] = None
 
     # Enhanced project information
-    problem_domain: Optional[str] = None
     target_beneficiaries: Optional[str] = None
     geographic_context: Optional[str] = None 
     urgency_level: Optional[str] = None

@@ -110,43 +110,6 @@ class DataValidator:
         )
     
     @staticmethod
-    def validate_deployment_environment(env_data: Dict[str, Any]) -> ValidationResult:
-        """Validate deployment environment configuration"""
-        errors = []
-        warnings = []
-        suggestions = []
-        
-        required_fields = [
-            "project_budget",
-            "project_timeline", 
-            "team_size",
-            "computing_resources",
-            "reliable_internet_connection",
-            "local_technology_setup",
-            "ai_ml_experience",
-            "technical_skills",
-            "learning_training_capacity",
-            "stakeholder_buy_in",
-            "change_management_readiness",
-            "data_governance",
-            "regulatory_requirements",
-            "external_partnerships",
-            "long_term_sustainability_plan"
-        ]
-        
-        # Check required fields
-        for field in required_fields:
-            if field not in env_data:
-                errors.append(f"Missing required field: {field}")
-        
-        return ValidationResult(
-            is_valid=len(errors) == 0,
-            errors=errors,
-            warnings=warnings,
-            suggestions=suggestions
-        )
-    
-    @staticmethod
     def validate_file_upload(
         filename: str,
         file_size: int,

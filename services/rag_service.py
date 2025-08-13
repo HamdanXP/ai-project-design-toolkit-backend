@@ -221,7 +221,6 @@ class RAGService:
         self, 
         ai_technique: str, 
         deployment_strategy: str,
-        complexity_level: str,
         project_description: str
     ) -> str:
         """Get technical implementation guidance from AI technical folder"""
@@ -231,7 +230,6 @@ class RAGService:
         try:
             query = f"""
             {ai_technique} technical implementation humanitarian {deployment_strategy}
-            {complexity_level} complexity architecture patterns deployment
             technical challenges solutions {project_description}
             case studies lessons learned implementation guide
             """
@@ -341,7 +339,6 @@ class RAGService:
         project_description: str,
         ai_technique: str,
         deployment_strategy: str,
-        complexity_level: str,
         target_beneficiaries: str,
         resource_constraints: Dict[str, Any]
     ) -> Dict[str, str]:
@@ -357,7 +354,7 @@ class RAGService:
                 ai_technique, project_description, target_beneficiaries
             ),
             self.get_technical_implementation_context(
-                ai_technique, deployment_strategy, complexity_level, project_description
+                ai_technique, deployment_strategy, project_description
             ),
             self.get_deployment_best_practices_context(
                 deployment_strategy, resource_constraints, project_description

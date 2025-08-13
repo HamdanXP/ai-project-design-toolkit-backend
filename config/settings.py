@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
     llm_temperature: float = 0.1
+
+    # Claude API settings
+    claude_api_key: str
+    claude_model: str = "claude-3-5-sonnet-20241022"
+    claude_temperature: float = 0.1
+    claude_max_tokens: int = 8192
    
     # Google Cloud Storage
     google_application_credentials: str
