@@ -205,9 +205,9 @@ class EvaluationService:
             data_quality_assessment.quality_score * 0.3
         )
         
-        is_suitable = (feature_compatibility.compatible and 
-                      data_volume_assessment.sufficient and 
-                      data_quality_assessment.quality_score >= 0.6)
+        is_suitable = overall_score >= 0.7
+        feature_compatibility.compatible = feature_compatibility.compatibility_score >= 0.7
+        data_volume_assessment.sufficient = data_volume_assessment.volume_score >= 0.7
         
         recommendations = await self._generate_dynamic_recommendations(
             feature_compatibility, data_volume_assessment, data_quality_assessment, 
@@ -392,6 +392,15 @@ class EvaluationService:
         
         return recommendations
     
+    def _remove_feature_duplicates(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        mapped_features = {m.get("required_feature") for m in analysis.get("feature_mappings", [])}
+        
+        analysis["missing_required"] = [
+            item for item in analysis.get("missing_required", []) 
+            if item.get("feature") not in mapped_features
+        ]
+        return analysis
+    
     async def _assess_feature_compatibility(
         self, 
         dataset_stats: Dict[str, Any], 
@@ -424,6 +433,8 @@ class EvaluationService:
         OPTIONAL FEATURES FOR AI SOLUTION:
         {chr(10).join(optional_descriptions)}
         
+        CRITICAL RULE: Each required feature must appear in EXACTLY ONE list - either found OR missing, NEVER BOTH.
+        
         Task: Match available columns to required/optional features using semantic understanding.
         Consider variations in naming, case, punctuation, units, and domain terminology.
         
@@ -449,6 +460,7 @@ class EvaluationService:
                     "reason": "explanation of why not found"
                 }}
             ],
+            "validation_check": "Confirmed no duplicates between lists",
             "compatibility_summary": "brief summary of overall compatibility"
         }}
         
@@ -457,6 +469,7 @@ class EvaluationService:
         
         response = await llm_service.analyze_text("", prompt)
         analysis = self._extract_json_from_response(response)
+        analysis = self._remove_feature_duplicates(analysis)
         
         mapped_required = []
         high_confidence_mappings = []
@@ -515,7 +528,7 @@ class EvaluationService:
     def _assess_data_quality(self, dataset_stats: Dict[str, Any]) -> DataQualityAssessment:
         
         quality_assessment = dataset_stats.get("qualityAssessment", {})
-        completeness_percentage = quality_assessment.get("completenessScore", 80)
+        completeness_percentage = quality_assessment.get("completenessScore", 60)
         
         quality_score = completeness_percentage / 100.0
         
@@ -542,27 +555,30 @@ class EvaluationService:
         basic_quality = self._assess_data_quality(dataset_stats)
         available_rows = dataset_stats.get("basicMetrics", {}).get("totalRows", 0)
         
+        overall_score = basic_quality.quality_score * 0.6 if available_rows > 50 else basic_quality.quality_score * 0.4
+        is_suitable = overall_score >= 0.7
+        
         return SuitabilityAssessment(
-            is_suitable=True,
-            overall_score=basic_quality.quality_score,
+            is_suitable=is_suitable,
+            overall_score=overall_score,
             feature_compatibility=FeatureCompatibility(
-                compatible=True,
+                compatible=is_suitable,
                 missing_required=[],
                 missing_optional=[],
                 available_required=[],
-                compatibility_score=1.0,
-                gap_explanation="This solution can work with your dataset structure."
+                compatibility_score=overall_score,
+                gap_explanation="Limited assessment possible without detailed solution requirements."
             ),
             data_volume_assessment=DataVolumeAssessment(
-                sufficient=True,
+                sufficient=available_rows > 50,
                 available_rows=available_rows,
-                required_rows=available_rows,
-                volume_score=1.0,
-                recommendation=f"Your dataset with {available_rows} rows is ready for this approach."
+                required_rows=100,
+                volume_score=min(1.0, available_rows / 100),
+                recommendation=f"Your dataset with {available_rows} rows requires manual review for compatibility."
             ),
             data_quality_assessment=basic_quality,
             recommendations=[],
-            performance_estimate="This solution should work well with your dataset structure."
+            performance_estimate=None
         )
     
     async def _generate_performance_estimate(
@@ -573,7 +589,7 @@ class EvaluationService:
     ) -> str:
         
         ai_technique = selected_solution.get("ai_technique", "classification")
-        completeness = dataset_stats.get("qualityAssessment", {}).get("completenessScore", 80)
+        completeness = dataset_stats.get("qualityAssessment", {}).get("completenessScore", 60)
         rows = dataset_stats.get("basicMetrics", {}).get("totalRows", 0)
         
         prompt = f"""
