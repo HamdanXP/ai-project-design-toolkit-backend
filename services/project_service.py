@@ -114,14 +114,12 @@ class ProjectService:
             if not project:
                 return None
             
-            # Validate that required phases are completed
             if not project.reflection_data:
                 logger.warning(f"Project {project_id} missing reflection data")
                 
             if not project.scoping_data:
                 logger.warning(f"Project {project_id} missing scoping data")
             
-            # Ensure problem domain is set
             if not hasattr(project, 'problem_domain') or not project.problem_domain:
                 project.problem_domain = await self.project_analysis.extract_problem_domain(
                     project.description, project.context
@@ -197,8 +195,9 @@ class ProjectService:
                 "scoping_data": project.scoping_data,
                 "development_data": project.development_data,
                 "evaluation_data": project.evaluation_data,
+                "ethical_considerations": [consideration.dict() for consideration in project.ethical_considerations] if project.ethical_considerations else [],
+                "ethical_considerations_acknowledged": project.ethical_considerations_acknowledged,
                 "updated_at": project.updated_at.isoformat(),
-                "version": project.version
             }
         except Exception as e:
             logger.error(f"Failed to get project with metadata: {e}")
@@ -210,8 +209,8 @@ class ProjectService:
         phase: str,
         phase_data: Dict[str, Any],
         advance_phase: bool = False,
-        project_readiness_assessment: Optional[ProjectReadinessAssessment] = None,  # NEW
-        ethical_assessment: Optional[EthicalAssessment] = None,  # Keep for backward compatibility
+        project_readiness_assessment: Optional[ProjectReadinessAssessment] = None,
+        ethical_assessment: Optional[EthicalAssessment] = None,
         selected_use_case: Optional[UseCase] = None,
         selected_dataset: Optional[Dataset] = None,
         data_suitability_assessment: Optional[DataSuitabilityAssessment] = None,
@@ -223,7 +222,6 @@ class ProjectService:
             if not project:
                 raise ValueError("Project not found")
             
-            # Update phase data
             if phase == "reflection":
                 project.reflection_data = phase_data
             elif phase == "scoping":
@@ -233,11 +231,9 @@ class ProjectService:
             elif phase == "evaluation":
                 project.evaluation_data = phase_data
             
-            # NEW: Update comprehensive project readiness assessment
             if project_readiness_assessment:
                 project.project_readiness_assessment = project_readiness_assessment
             
-            # Update core assessments if provided (keep existing functionality)
             if ethical_assessment:
                 project.ethical_assessment = ethical_assessment
             
@@ -260,8 +256,7 @@ class ProjectService:
                     project.current_phase = phase_order[current_index + 1]
                     project.status = ProjectStatus(project.current_phase)
             
-            # Update timestamp and version
-            project.touch()
+            project.updated_at = datetime.utcnow()
             
             await project.save()
             return project
@@ -290,12 +285,10 @@ class ProjectService:
             if not project:
                 return None
             
-            # Extract technical infrastructure from scoping data
             technical_infrastructure = None
             if project.scoping_data and 'technical_infrastructure' in project.scoping_data:
                 technical_infrastructure = project.scoping_data['technical_infrastructure']
             
-            # Extract key information for development
             summary = {
                 "project_info": {
                     "id": str(project.id),
@@ -329,7 +322,6 @@ class ProjectService:
             "potential_risks": ""
         }
         
-        # Extract target beneficiaries and risks from answers
         answers = reflection_data.get("answers", {})
         for key, answer in answers.items():
             if "beneficiar" in key.lower() or "target" in key.lower():
@@ -376,16 +368,14 @@ class ProjectService:
             if not project:
                 return False
             
-            # Mark overall acknowledgment
             project.ethical_considerations_acknowledged = True
             
-            # Mark specific considerations as acknowledged if provided
             if acknowledged_considerations and project.ethical_considerations:
                 for consideration in project.ethical_considerations:
                     if consideration.id in acknowledged_considerations:
                         consideration.acknowledged = True
             
-            project.touch()
+            project.updated_at = datetime.utcnow()
             await project.save()
             
             logger.info(f"Acknowledged ethical considerations for project {project_id}")
@@ -401,41 +391,33 @@ class ProjectService:
             if not project:
                 return []
             
-            # Use stored target beneficiaries (can be None)
             target_beneficiaries = project.target_beneficiaries
             
-            # Check if reflection data has more specific beneficiary information
             if project.reflection_data and project.reflection_data.get("answers"):
                 answers = project.reflection_data["answers"]
                 for key, answer in answers.items():
                     if ("beneficiar" in key.lower() or "target" in key.lower()) and answer.strip():
-                        # Use reflection answer if it's available and target_beneficiaries wasn't extracted
                         if not target_beneficiaries or len(answer.strip()) > len(target_beneficiaries):
                             target_beneficiaries = answer.strip()
                         break
             
-            # Get fresh ethical considerations 
-            # Use empty string if target_beneficiaries is None since RAG query needs a string
             ethical_considerations_data = await core.rag_service.get_ethical_considerations_for_project(
                 project_description=project.description,
                 problem_domain=project.problem_domain or "general_humanitarian",
                 target_beneficiaries=target_beneficiaries or ""
             )
             
-            # Convert to EthicalConsideration objects
             project.ethical_considerations = [
                 EthicalConsideration(**consideration)
                 for consideration in ethical_considerations_data
             ]
             
-            # Reset acknowledgment since considerations have changed
             project.ethical_considerations_acknowledged = False
             
-            # Update target beneficiaries if we found better info from reflection
             if target_beneficiaries and target_beneficiaries != project.target_beneficiaries:
                 project.target_beneficiaries = target_beneficiaries
             
-            project.touch()
+            project.updated_at = datetime.utcnow()
             await project.save()
             
             logger.info(f"Refreshed ethical considerations for project {project_id} with beneficiaries: {target_beneficiaries or 'not specified'}")

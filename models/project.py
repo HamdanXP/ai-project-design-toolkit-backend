@@ -58,17 +58,14 @@ class QuestionFlag(BaseModel):
     category: QuestionFlagCategory
 
 class ProjectReadinessAssessment(BaseModel):
-    # Ethical assessment fields
     ethical_score: float = Field(..., ge=0, le=1)
     ethical_summary: str = ""
     
-    # AI appropriateness assessment fields
     ai_appropriateness_score: float = Field(..., ge=0, le=1)
     ai_appropriateness_summary: str = ""
     ai_recommendation: AIRecommendation = AIRecommendation.APPROPRIATE
     alternative_solutions: Optional[AlternativeSolutions] = None
     
-    # Combined assessment
     overall_readiness_score: float = Field(..., ge=0, le=1)
     proceed_recommendation: bool = False
     summary: str = ""
@@ -196,13 +193,6 @@ class Project(Document):
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    version: int = Field(default=1)
-    
-    # Add method to update timestamp
-    def touch(self):
-        """Update the updated_at timestamp"""
-        self.updated_at = datetime.utcnow()
-        self.version += 1
     
     class Settings:
         name = "projects"
