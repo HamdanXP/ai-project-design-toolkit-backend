@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple, Union
 from models.development import (
-    AISolution, RequiredFeature, TabularDataRequirements, TechnicalArchitecture, ResourceRequirement, EthicalSafeguard
+    AISolution, LLMRequirements, NLPRequirements, RequiredFeature, TabularDataRequirements, TechnicalArchitecture, ResourceRequirement, EthicalSafeguard
 )
 from models.enums import AITechnique, DeploymentStrategy
 
@@ -61,7 +61,7 @@ class ClaudeCodeGenerationService:
                 pass
         
         raise ValueError(f"Could not extract valid JSON from response: {content[:200]}...")
-
+    
     def _validate_enum_values(self, data: Dict[str, Any], field_mappings: Dict[str, List[str]]) -> bool:
         
         for field, valid_values in field_mappings.items():
@@ -215,8 +215,7 @@ class ClaudeCodeGenerationService:
                     raise ValueError(f"Failed to analyze viable AI approaches: {e}")
         
     async def generate_contextual_solutions(self, viable_approaches: Dict[str, Any], 
-                                    project_context: Dict[str, Any], rag_context: str,
-                                    user_feedback: Optional[str] = None) -> List[AISolution]:
+                                    project_context: Dict[str, Any], user_feedback: Optional[str] = None) -> List[AISolution]:
         
         system_prompt = """Generate diverse AI solutions for humanitarian problems with accurate dataset requirements. Each solution should clearly specify if it needs data and what type. The targeted users are non-technical humanitarian professionals"""
         
@@ -280,6 +279,21 @@ class ClaudeCodeGenerationService:
                     "minimum_rows": minimum_data_points_needed,
                     "data_types": {{"column_name": "expected_type"}}
                 }},
+                "llm_requirements (only if ai_technique is llm)": {{
+                    "system_prompt": "Complete, production-ready system prompt specifically designed for this humanitarian use case and target beneficiaries",
+                    "suggested_model": "Appropriate model based on solution complexity and deployment constraints",
+                    "key_parameters": {{
+                        "temperature": appropriate_value_for_this_use_case,
+                        "max_tokens": appropriate_value_for_expected_output_length,
+                        "additional_parameters": "as_needed_for_this_solution"
+                    }}
+                }},
+                "nlp_requirements (only if ai_technique is nlp)": {{
+                    "preprocessing_steps": ["specific preprocessing step for this humanitarian context"],
+                    "processing_approach": "Specific NLP approach suitable for this problem and deployment context",
+                    "feature_extraction": "Feature extraction method appropriate for this humanitarian use case",
+                    "expected_input_format": "Description of expected input format for this solution"
+                }},
                 "capabilities": ["specific capability this approach provides"],
                 "key_features": ["main feature of this approach"],
                 "technical_architecture": {{
@@ -316,8 +330,14 @@ class ClaudeCodeGenerationService:
         ]
     }}
 
-    IMPORTANT: Only include tabular_requirements if needs_dataset=true AND dataset_type="tabular".
-    For other dataset types or no dataset, set tabular_requirements to null."""
+    CRITICAL REQUIREMENTS:
+    - Only include tabular_requirements if needs_dataset=true AND dataset_type="tabular"
+    - Only include llm_requirements if ai_technique="llm" 
+    - Only include nlp_requirements if ai_technique="nlp"
+    - For other combinations, set unused requirement fields to null
+    - LLM system prompts must be complete and specific to the humanitarian problem and target users
+    - NLP processing approaches must be specific to the data type and humanitarian context
+    - All requirements must be directly implementable in generated code"""
 
         for attempt in range(self.max_retries):
             try:
@@ -354,7 +374,7 @@ class ClaudeCodeGenerationService:
                         }
                         
                         if self._validate_enum_values(solution_dict, field_mappings):
-                            try:
+                            try:                                
                                 solution_obj = self._convert_solution_dict_to_object(solution_dict)
                                 valid_solutions.append(solution_obj)
                                 used_techniques.add(technique)
@@ -449,6 +469,18 @@ class ClaudeCodeGenerationService:
                     data_types=tabular_req_data.get("data_types", {})
                 )
             
+            llm_requirements = None
+            if solution_data.get("llm_requirements"):
+                llm_req_data = solution_data["llm_requirements"]
+                if llm_req_data.get("system_prompt"):
+                    llm_requirements = LLMRequirements(**llm_req_data)
+            
+            nlp_requirements = None
+            if solution_data.get("nlp_requirements"):
+                nlp_req_data = solution_data["nlp_requirements"]
+                if nlp_req_data.get("processing_approach"):
+                    nlp_requirements = NLPRequirements(**nlp_req_data)
+
             ethical_safeguards = []
             safeguard_data = solution_data.get("ethical_safeguards", [])
             for sg_data in safeguard_data:
@@ -475,6 +507,8 @@ class ClaudeCodeGenerationService:
                 needs_dataset=solution_data.get("needs_dataset", False),
                 dataset_type=solution_data.get("dataset_type"),
                 tabular_requirements=tabular_requirements,
+                llm_requirements=llm_requirements,
+                nlp_requirements=nlp_requirements,
                 capabilities=solution_data.get("capabilities", []),
                 key_features=solution_data.get("key_features", []),
                 technical_architecture=tech_arch,
@@ -495,7 +529,6 @@ class ClaudeCodeGenerationService:
 
     async def design_contextual_architecture(self, selected_solution: Dict[str, Any], 
                                         project_context: Dict[str, Any], 
-                                        technical_guidance: str,
                                         user_feedback: Optional[str] = None) -> Dict[str, Any]:
         
         system_prompt = """Design implementation architecture based on the already-determined AI technique, project context, and technical decisions. Focus on file structure, dependencies, and code organization rather than re-deciding architectural choices."""
@@ -503,7 +536,25 @@ class ClaudeCodeGenerationService:
         existing_architecture = selected_solution.get('technical_architecture', {})
         ai_technique = selected_solution.get('ai_technique', 'classification')
         deployment_strategy = selected_solution.get('deployment_strategy', 'local_processing')
-        
+        llm_requirements = selected_solution.get('llm_requirements')
+        nlp_requirements = selected_solution.get('nlp_requirements')
+    
+        requirements_context = ""
+        if llm_requirements:
+            requirements_context = f"""
+            LLM IMPLEMENTATION REQUIREMENTS:
+            System Prompt: {llm_requirements['system_prompt']}
+            Model: {llm_requirements['suggested_model']}
+            Parameters: {json.dumps(llm_requirements['key_parameters'])}
+            """
+        elif nlp_requirements:
+            requirements_context = f"""
+            NLP IMPLEMENTATION REQUIREMENTS:
+            Processing: {nlp_requirements['processing_approach']}
+            Preprocessing: {', '.join(nlp_requirements['preprocessing_steps'])}
+            Feature Extraction: {nlp_requirements['feature_extraction']}
+            Input Format: {nlp_requirements['expected_input_format']}
+            """
         feedback_context = ""
         if user_feedback:
             feedback_context = f"""
@@ -518,6 +569,7 @@ class ClaudeCodeGenerationService:
 
     SOLUTION: {json.dumps(selected_solution, indent=2)}
     PROJECT: {json.dumps(project_context, indent=2)}{feedback_context}
+    REQUIREMENTS: {requirements_context}
 
     EXISTING ARCHITECTURAL DECISIONS (DO NOT CHANGE):
     - AI Technique: {ai_technique}
@@ -633,6 +685,25 @@ class ClaudeCodeGenerationService:
         
         system_prompt = f"""Generate working Python code for this humanitarian AI solution. Create functional code that implements the specific AI technique with appropriate interfaces for humanitarian users."""
         
+        llm_requirements = solution.get('llm_requirements')
+        nlp_requirements = solution.get('nlp_requirements')
+    
+        requirements_context = ""
+        if llm_requirements:
+            requirements_context = f"""
+            LLM IMPLEMENTATION REQUIREMENTS:
+            System Prompt: {llm_requirements['system_prompt']}
+            Model: {llm_requirements['suggested_model']}
+            Parameters: {json.dumps(llm_requirements['key_parameters'])}
+            """
+        elif nlp_requirements:
+            requirements_context = f"""
+            NLP IMPLEMENTATION REQUIREMENTS:
+            Processing: {nlp_requirements['processing_approach']}
+            Preprocessing: {', '.join(nlp_requirements['preprocessing_steps'])}
+            Feature Extraction: {nlp_requirements['feature_extraction']}
+            Input Format: {nlp_requirements['expected_input_format']}
+            """
         feedback_context = ""
         if user_feedback:
             feedback_context = f"""
@@ -642,14 +713,13 @@ class ClaudeCodeGenerationService:
             
             Ensure the generated code addresses these specific requirements while implementing the {solution.get('ai_technique')} solution.
             """
-        
-        file_structure = architecture.get("implementation_plan", {}).get("file_structure", [])
-        
+                
         user_prompt = f"""Generate complete working code for this AI solution.
 
 ARCHITECTURE: {json.dumps(architecture, indent=2)}
 SOLUTION: {json.dumps(solution, indent=2)}
 PROJECT: {json.dumps(project_context, indent=2)}{feedback_context}
+{requirements_context}
 
 Respond with ONLY valid JSON mapping filenames to complete file contents. No explanatory text.
 

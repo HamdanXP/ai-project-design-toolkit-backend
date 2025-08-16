@@ -19,6 +19,17 @@ class TabularDataRequirements(BaseModel):
     minimum_rows: int
     data_types: Dict[str, str]
 
+class LLMRequirements(BaseModel):
+    system_prompt: str
+    suggested_model: str
+    key_parameters: Dict[str, Any]
+
+class NLPRequirements(BaseModel):
+    preprocessing_steps: List[str]
+    processing_approach: str
+    feature_extraction: str
+    expected_input_format: str
+
 class ResourceRequirement(BaseModel):
     computing_power: str
     storage_needs: str
@@ -61,6 +72,8 @@ class AISolution(BaseModel):
     needs_dataset: bool
     dataset_type: Optional[Literal["tabular", "text", "image", "audio", "video", "none"]] = None
     tabular_requirements: Optional[TabularDataRequirements] = None
+    llm_requirements: Optional[LLMRequirements] = None
+    nlp_requirements: Optional[NLPRequirements] = None
     capabilities: List[str]
     key_features: List[str]
     technical_architecture: TechnicalArchitecture
@@ -73,7 +86,7 @@ class AISolution(BaseModel):
     maintenance_requirements: List[str]
     data_requirements: List[str]
     output_examples: List[str]
-
+    
 class ProjectContext(BaseModel):
     title: str
     description: str

@@ -80,7 +80,7 @@ async def simulate_project(
             )
         else:
             simulation_results = await evaluation_service.simulate_without_dataset(
-                project, simulation_request.custom_scenarios
+                project
             )
         
         evaluation_data = project.evaluation_data or {}
@@ -88,6 +88,8 @@ async def simulate_project(
             "simulation_results": simulation_results.dict(),
             "simulation_timestamp": datetime.utcnow().isoformat(),
             "testing_method": simulation_results.testing_method.value,
+            "component_transparency": simulation_results.component_transparency.dict() if simulation_results.component_transparency else None,
+            "scenario_results": [result.dict() for result in simulation_results.scenario_results] if simulation_results.scenario_results else None,
             "phase_status": "simulation_completed"
         })
         

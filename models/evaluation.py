@@ -36,6 +36,20 @@ class EvaluationApproach(str, Enum):
     SCENARIO_BASED = "scenario_based"
     EVALUATION_BYPASS = "evaluation_bypass"
 
+class ScenarioResult(BaseModel):
+    scenario_name: str
+    input_provided: str
+    actual_output: str
+    component_used: str
+    execution_time_ms: Optional[float] = None
+    humanitarian_relevance_assessment: str
+
+class ComponentTransparency(BaseModel):
+    component_type: Literal["llm", "nlp", "none"]
+    system_prompt: Optional[str] = None
+    processing_approach: Optional[str] = None
+    model_used: Optional[str] = None
+
 class FeatureCompatibility(BaseModel):
     compatible: bool
     missing_required: List[str]
@@ -126,8 +140,9 @@ class SimulationResult(BaseModel):
     testing_method: TestingMethod
     confidence_level: ConfidenceLevel
     suitability_assessment: Optional[SuitabilityAssessment] = None
-    scenarios: Optional[List[ExampleScenario]] = None
+    scenario_results: Optional[List[ScenarioResult]] = None
     evaluation_bypass: Optional[EvaluationBypass] = None
+    component_transparency: Optional[ComponentTransparency] = None
     simulation_explanation: SimulationExplanation
 
 class EvaluationDecision(str, Enum):

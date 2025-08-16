@@ -334,49 +334,6 @@ class RAGService:
             logger.warning(f"Failed to get monitoring frameworks context: {e}")
             return ""
     
-    async def get_comprehensive_development_context(
-        self,
-        project_description: str,
-        ai_technique: str,
-        deployment_strategy: str,
-        target_beneficiaries: str,
-        resource_constraints: Dict[str, Any]
-    ) -> Dict[str, str]:
-        """Get comprehensive context using domain-specific indexes"""
-        
-        # Gather context from multiple specialized queries
-        contexts = await asyncio.gather(
-            self.get_context_for_solution_generation(
-                project_description, ai_technique, deployment_strategy, 
-                getattr(resource_constraints, 'problem_domain', 'humanitarian')
-            ),
-            self.get_ethical_frameworks_context(
-                ai_technique, project_description, target_beneficiaries
-            ),
-            self.get_technical_implementation_context(
-                ai_technique, deployment_strategy, project_description
-            ),
-            self.get_deployment_best_practices_context(
-                deployment_strategy, resource_constraints, project_description
-            ),
-            self.get_bias_testing_frameworks_context(
-                ai_technique, target_beneficiaries, project_description
-            ),
-            self.get_monitoring_frameworks_context(
-                ai_technique, deployment_strategy, project_description
-            ),
-            return_exceptions=True
-        )
-        
-        return {
-            "solution_generation": contexts[0] if not isinstance(contexts[0], Exception) else "",
-            "ethical_frameworks": contexts[1] if not isinstance(contexts[1], Exception) else "",
-            "technical_implementation": contexts[2] if not isinstance(contexts[2], Exception) else "",
-            "deployment_best_practices": contexts[3] if not isinstance(contexts[3], Exception) else "",
-            "bias_testing_frameworks": contexts[4] if not isinstance(contexts[4], Exception) else "",
-            "monitoring_frameworks": contexts[5] if not isinstance(contexts[5], Exception) else "",
-        }
-    
     async def get_real_world_case_studies_context(
         self,
         ai_technique: str,

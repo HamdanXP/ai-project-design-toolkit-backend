@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import json
 import logging
@@ -68,18 +69,7 @@ class DevelopmentService:
                 problem_domain=getattr(project, 'problem_domain', 'humanitarian'),
                 user_feedback=user_feedback
             )
-            
-            primary_technique = viable_approaches.get('viable_techniques', ['classification'])[0] if viable_approaches.get('viable_techniques') else 'classification'
-            primary_deployment = viable_approaches.get('suitable_deployments', ['local_processing'])[0] if viable_approaches.get('suitable_deployments') else 'local_processing'
-            
-            rag_context = await ctx.rag_service.get_comprehensive_development_context(
-                project_description=project.description,
-                ai_technique=primary_technique,
-                deployment_strategy=primary_deployment,
-                target_beneficiaries=await self._extract_target_beneficiaries(project),
-                resource_constraints=viable_approaches
-            )
-            
+        
             solution_context = self._build_project_context_dict(project)
             if user_feedback:
                 solution_context["user_feedback"] = user_feedback
@@ -87,7 +77,6 @@ class DevelopmentService:
             solutions = await claude_code_service.generate_contextual_solutions(
                 viable_approaches=viable_approaches,
                 project_context=solution_context,
-                rag_context=rag_context.get('solution_generation', ''),
                 user_feedback=user_feedback
             )
             
@@ -136,7 +125,6 @@ class DevelopmentService:
             architecture = await claude_code_service.design_contextual_architecture(
                 selected_solution=selected_solution,
                 project_context=self._build_project_context_dict(project),
-                technical_guidance=await self._get_technical_guidance(selected_solution, project),
                 user_feedback=user_feedback
             )
             
@@ -146,23 +134,19 @@ class DevelopmentService:
                 project_context=self._build_project_context_dict(project),
                 user_feedback=user_feedback
             )
+                        
+            docs_tasks = [
+                self._generate_documentation(selected_solution, project, project_files),
+                self._generate_setup_instructions(selected_solution, project_files),
+                self._generate_deployment_guide(selected_solution, project_files),
+                self._generate_ethical_assessment_guide(selected_solution, project),
+                self._generate_technical_handover_package(selected_solution, project, architecture, project_files),
+                self._generate_generation_report(selected_solution, project, project_files, architecture)
+            ]
             
-            if not validation_passed:
-                logger.warning("Code validation passed but proceeding with generation")
-            
-            documentation = await self._generate_documentation(selected_solution, project, project_files)
-            setup_instructions = await self._generate_setup_instructions(selected_solution, project_files)
-            deployment_guide = await self._generate_deployment_guide(selected_solution, project_files)
-            
-            ethical_assessment_guide = await self._generate_ethical_assessment_guide(selected_solution, project)
-            technical_handover_package = await self._generate_technical_handover_package(
-                selected_solution, project, architecture, project_files
-            )
-            
-            generation_report = await self._generate_generation_report(
-                selected_solution, project, project_files, architecture
-            )
-            
+            (documentation, setup_instructions, deployment_guide, 
+            ethical_assessment_guide, technical_handover_package, generation_report) = await asyncio.gather(*docs_tasks)
+
             generated_project = GeneratedProject(
                 id=f"project_{project.id}_{solution_id}_{int(datetime.utcnow().timestamp())}",
                 title=f"{selected_solution.get('title')} - {project.title}",

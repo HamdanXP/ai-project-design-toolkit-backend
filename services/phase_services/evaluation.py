@@ -1,11 +1,14 @@
-from datetime import datetime
+from datetime import datetime, time
 import json
 import logging
 from typing import Dict, Any, List, Optional
+
+from openai import AsyncOpenAI
+from config import settings
 from core.llm_service import llm_service
 from models.project import Project
 from models.evaluation import (
-    EvaluationContext, SimulationResult, EvaluationResult, TestingMethod,
+    ComponentTransparency, EvaluationContext, ScenarioResult, SimulationResult, EvaluationResult, TestingMethod,
     SimulationCapabilities, TestingScenario, ExampleScenario,
     SimulationExplanation, EvaluationSummary,
     ScenarioRegenerationRequest, ProjectDownloads, DownloadableFile,
@@ -30,11 +33,9 @@ class EvaluationService:
         selected_solution = self._get_full_selected_solution(project)
         
         evaluation_approach = self._determine_evaluation_approach(selected_solution)
-        
-        simulation_capabilities = await self._determine_simulation_capabilities(
-            project, generated_project_data, selected_solution, evaluation_approach
-        )
-        
+
+        simulation_capabilities = self._determine_simulation_capabilities(selected_solution)
+
         testing_scenarios = None
         evaluation_bypass = None
         
@@ -78,37 +79,41 @@ class EvaluationService:
             return EvaluationApproach.DATASET_ANALYSIS
         else:
             return EvaluationApproach.EVALUATION_BYPASS
-    
-    async def _determine_simulation_capabilities(
-        self, 
-        project: Project, 
-        generated_project_data: Dict[str, Any], 
-        selected_solution: Dict[str, Any],
-        evaluation_approach: EvaluationApproach
-    ) -> SimulationCapabilities:
+
+    def _determine_simulation_capabilities(self, selected_solution: Dict[str, Any]) -> SimulationCapabilities:
+        ai_technique = selected_solution.get('ai_technique', '')
+        needs_dataset = selected_solution.get('needs_dataset', False)
+        dataset_type = selected_solution.get('dataset_type')
+        llm_requirements = selected_solution.get('llm_requirements')
+        nlp_requirements = selected_solution.get('nlp_requirements')
         
-        ai_technique = selected_solution.get("ai_technique", "classification").lower()
+        if needs_dataset and dataset_type == "tabular":
+            return SimulationCapabilities(
+                testing_method=TestingMethod.DATASET,
+                evaluation_approach=EvaluationApproach.DATASET_ANALYSIS,
+                ai_technique=ai_technique,
+                data_formats_supported=["csv", "tsv", "txt", "xlsx", "xls", "json"],
+                explanation="Upload your dataset to assess compatibility with this AI solution"
+            )
         
-        if evaluation_approach == EvaluationApproach.DATASET_ANALYSIS:
-            testing_method = TestingMethod.DATASET
-            explanation = f"This {ai_technique} solution requires dataset analysis to assess compatibility with your data structure and provide suitability recommendations."
-            data_formats = ["csv", "excel", "json"]
-        elif evaluation_approach == EvaluationApproach.SCENARIO_BASED:
-            testing_method = TestingMethod.SCENARIOS
-            explanation = f"This {ai_technique} solution works best with scenario-based testing to evaluate how it handles different humanitarian situations."
-            data_formats = []
+        elif llm_requirements or nlp_requirements:
+            component_type = "LLM system prompt" if llm_requirements else "NLP processing pipeline"
+            return SimulationCapabilities(
+                testing_method=TestingMethod.SCENARIOS,
+                evaluation_approach=EvaluationApproach.SCENARIO_BASED,
+                ai_technique=ai_technique,
+                data_formats_supported=[],
+                explanation=f"Test your generated {component_type} with realistic humanitarian scenarios to see actual outputs"
+            )
+        
         else:
-            testing_method = TestingMethod.BYPASS
-            explanation = f"This {ai_technique} solution requires specialized evaluation tools beyond this toolkit's scope."
-            data_formats = []
-        
-        return SimulationCapabilities(
-            testing_method=testing_method,
-            evaluation_approach=evaluation_approach,
-            ai_technique=ai_technique,
-            data_formats_supported=data_formats,
-            explanation=explanation
-        )
+            return SimulationCapabilities(
+                testing_method=TestingMethod.BYPASS,
+                evaluation_approach=EvaluationApproach.EVALUATION_BYPASS,
+                ai_technique=ai_technique,
+                data_formats_supported=[],
+                explanation="This solution requires manual evaluation with the generated implementation"
+            )
     
     def _create_evaluation_bypass(self, selected_solution: Dict[str, Any]) -> EvaluationBypass:
         dataset_type = selected_solution.get("dataset_type", "unknown")
@@ -160,30 +165,164 @@ class EvaluationService:
             simulation_explanation=simulation_explanation
         )
     
-    async def simulate_without_dataset(self, project: Project, custom_scenarios: Optional[List[str]] = None) -> SimulationResult:
-        
-        if not project.development_data or not project.development_data.get("generated_project"):
-            raise ValueError("No generated project found for simulation")
-        
+    async def simulate_without_dataset(self, project: Project) -> SimulationResult:
         generated_project_data = project.development_data["generated_project"]
         selected_solution = self._get_full_selected_solution(project)
         
-        simulation_explanation = self._create_simulation_explanation(
-            TestingMethod.SCENARIOS, None, custom_scenarios
-        )
+        llm_requirements = selected_solution.get('llm_requirements')
+        nlp_requirements = selected_solution.get('nlp_requirements')
         
-        example_scenarios = await self._generate_example_scenarios(
-            project, generated_project_data, selected_solution, custom_scenarios
-        )
+        if llm_requirements:
+            scenario_results = await self._test_llm_scenarios(project, llm_requirements)
+            component_transparency = ComponentTransparency(
+                component_type="llm",
+                system_prompt=llm_requirements.get('system_prompt'),
+                model_used=llm_requirements.get('suggested_model')
+            )
+        elif nlp_requirements:
+            scenario_results = await self._test_nlp_scenarios(project, nlp_requirements)
+            component_transparency = ComponentTransparency(
+                component_type="nlp",
+                processing_approach=nlp_requirements.get('processing_approach')
+            )
+        else:
+            scenario_results = await self._generate_fallback_scenarios(project, selected_solution)
+            component_transparency = ComponentTransparency(component_type="none")
+        
+        simulation_explanation = self._create_simulation_explanation(TestingMethod.SCENARIOS, None)
         
         return SimulationResult(
             simulation_type=SimulationType.EXAMPLE_SCENARIOS,
             testing_method=TestingMethod.SCENARIOS,
-            scenarios=example_scenarios,
+            scenario_results=scenario_results,
+            component_transparency=component_transparency,
             confidence_level=ConfidenceLevel.MEDIUM,
             simulation_explanation=simulation_explanation
         )
-    
+
+    async def _generate_fallback_scenarios(self, project: Project, selected_solution: Dict[str, Any]) -> List[ScenarioResult]:
+        scenarios = await self._generate_testing_scenarios(project, project.development_data["generated_project"], 
+                                                        selected_solution)
+
+        results = []
+        for scenario in scenarios:
+            results.append(ScenarioResult(
+                scenario_name=scenario.name,
+                input_provided=scenario.input_description,
+                actual_output=scenario.expected_outcome,
+                component_used="Theoretical Analysis",
+                humanitarian_relevance_assessment="This solution requires manual testing with actual implementation"
+            ))
+        
+        return results
+
+    async def _test_llm_scenarios(self, project: Project, llm_requirements: Dict[str, Any]) -> List[ScenarioResult]:
+        scenarios = await self._generate_testing_scenarios(project, project.development_data["generated_project"], 
+                                                        self._get_full_selected_solution(project))
+
+        openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        system_prompt = llm_requirements['system_prompt']
+        model = settings.openai_model
+        parameters = llm_requirements.get('key_parameters', {"temperature": 0.7, "max_tokens": 500})
+        
+        results = []
+        for scenario in scenarios:
+            try:
+                start_time = time.time()
+                
+                response = await openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": scenario.input_description}
+                    ],
+                    **parameters
+                )
+                
+                execution_time = (time.time() - start_time) * 1000
+                actual_output = response.choices[0].message.content
+                
+                relevance = await self._assess_output_relevance(scenario, actual_output, project)
+                
+                results.append(ScenarioResult(
+                    scenario_name=scenario.name,
+                    input_provided=scenario.input_description,
+                    actual_output=actual_output,
+                    component_used="LLM System Prompt",
+                    execution_time_ms=execution_time,
+                    humanitarian_relevance_assessment=relevance
+                ))
+                
+            except Exception as e:
+                results.append(ScenarioResult(
+                    scenario_name=scenario.name,
+                    input_provided=scenario.input_description,
+                    actual_output=f"Error: {str(e)}",
+                    component_used="LLM System Prompt",
+                    humanitarian_relevance_assessment="Could not evaluate due to execution error"
+                ))
+        
+        return results
+
+    async def _test_nlp_scenarios(self, project: Project, nlp_requirements: Dict[str, Any]) -> List[ScenarioResult]:
+        scenarios = await self._generate_testing_scenarios(project, project.development_data["generated_project"], 
+                                                        self._get_full_selected_solution(project))
+        
+        nlp_context = f"""
+        Simulate this NLP processing approach:
+        Processing Approach: {nlp_requirements['processing_approach']}
+        Preprocessing: {', '.join(nlp_requirements['preprocessing_steps'])}
+        Feature Extraction: {nlp_requirements['feature_extraction']}
+        Expected Input: {nlp_requirements['expected_input_format']}
+        
+        For the given input, simulate what this NLP approach would output.
+        """
+        
+        results = []
+        for scenario in scenarios:
+            try:
+                start_time = time.time()
+                
+                prompt = f"{nlp_context}\n\nInput to process: {scenario.input_description}\n\nSimulated NLP output:"
+                actual_output = await llm_service.analyze_text("", prompt)
+                
+                execution_time = (time.time() - start_time) * 1000
+                relevance = await self._assess_output_relevance(scenario, actual_output, project)
+                
+                results.append(ScenarioResult(
+                    scenario_name=scenario.name,
+                    input_provided=scenario.input_description,
+                    actual_output=actual_output,
+                    component_used="NLP Processing Simulation",
+                    execution_time_ms=execution_time,
+                    humanitarian_relevance_assessment=relevance
+                ))
+                
+            except Exception as e:
+                results.append(ScenarioResult(
+                    scenario_name=scenario.name,
+                    input_provided=scenario.input_description,
+                    actual_output=f"Error: {str(e)}",
+                    component_used="NLP Processing Simulation",
+                    humanitarian_relevance_assessment="Could not evaluate due to simulation error"
+                ))
+        
+        return results
+
+    async def _assess_output_relevance(self, scenario: TestingScenario, actual_output: str, project: Project) -> str:
+        prompt = f"""
+        Assess this AI output for humanitarian relevance:
+        
+        Scenario: {scenario.name}
+        Expected Outcome: {scenario.expected_outcome}
+        Actual Output: {actual_output}
+        Project Context: {project.description}
+        
+        Provide a brief assessment of whether the output meets humanitarian expectations.
+        """
+        
+        return await llm_service.analyze_text("", prompt)
+
     async def _assess_dataset_suitability(
         self, 
         project: Project, 
@@ -837,9 +976,9 @@ class EvaluationService:
         
         generated_project_data = project.development_data["generated_project"]
         selected_solution = self._get_full_selected_solution(project)
-        
-        return await self._generate_testing_scenarios(project, generated_project_data, selected_solution, request.custom_scenarios)
-    
+
+        return await self._generate_testing_scenarios(project, generated_project_data, selected_solution)
+
     async def get_download_files(self, project: Project) -> ProjectDownloads:
         
         if not project.development_data or not project.development_data.get("generated_project"):
@@ -897,7 +1036,6 @@ class EvaluationService:
         self, 
         testing_method: TestingMethod, 
         dataset_statistics: Optional[Dict[str, Any]] = None,
-        custom_scenarios: Optional[List[str]] = None
     ) -> SimulationExplanation:
         
         if testing_method == TestingMethod.DATASET:
@@ -919,20 +1057,12 @@ class EvaluationService:
             methodology = "Scenario-Based Capability Assessment"
             data_usage = "AI-generated scenarios demonstrate expected solution behavior in typical humanitarian contexts."
             
-            if custom_scenarios:
-                calculation_basis = [
-                    "Custom scenarios provided by user integrated with generated examples",
-                    "Solution capabilities analyzed against humanitarian use case requirements",
-                    "Expected behavior modeled based on AI technique characteristics",
-                    "Contextual response patterns appropriate for humanitarian applications"
-                ]
-            else:
-                calculation_basis = [
-                    "Scenarios generated based on project context and AI technique capabilities",
-                    "Humanitarian best practices incorporated into test cases",
-                    "Typical input-output patterns for this solution type",
-                    "Expected behavior modeling without actual data processing"
-                ]
+            calculation_basis = [
+                "Scenarios generated based on project context and AI technique capabilities",
+                "Humanitarian best practices incorporated into test cases",
+                "Typical input-output patterns for this solution type",
+                "Expected behavior modeling without actual data processing"
+            ]
             
             limitations = [
                 "Scenarios demonstrate expected capabilities, not guaranteed performance",
@@ -953,12 +1083,7 @@ class EvaluationService:
         project: Project, 
         generated_project_data: Dict[str, Any], 
         selected_solution: Dict[str, Any],
-        custom_scenarios: Optional[List[str]] = None
     ) -> List[TestingScenario]:
-        
-        custom_context = ""
-        if custom_scenarios:
-            custom_context = f"\nUSER SCENARIOS: {', '.join(custom_scenarios)}\nIncorporate these specific scenarios."
         
         prompt = f"""
         Generate testing scenarios for this humanitarian AI solution:
@@ -967,7 +1092,6 @@ class EvaluationService:
         SOLUTION: {selected_solution.get('title', 'AI Solution')}
         AI TECHNIQUE: {selected_solution.get('ai_technique', 'classification')}
         DOMAIN: {getattr(project, 'problem_domain', 'humanitarian')}
-        {custom_context}
         
         Generate 4 comprehensive testing scenarios:
         {{
@@ -1015,12 +1139,7 @@ class EvaluationService:
         project: Project, 
         generated_project_data: Dict[str, Any], 
         selected_solution: Dict[str, Any],
-        custom_scenarios: Optional[List[str]] = None
     ) -> List[ExampleScenario]:
-        
-        custom_context = ""
-        if custom_scenarios:
-            custom_context = f"\nUSER SCENARIOS: {', '.join(custom_scenarios)}\nIncorporate these scenarios."
         
         prompt = f"""
         Generate example scenarios showing how this AI solution works:
@@ -1029,7 +1148,6 @@ class EvaluationService:
         SOLUTION: {selected_solution.get('title', 'AI Solution')}
         AI TECHNIQUE: {selected_solution.get('ai_technique', 'classification')}
         DOMAIN: {getattr(project, 'problem_domain', 'humanitarian')}
-        {custom_context}
         
         Generate 4 realistic examples:
         {{
