@@ -193,6 +193,10 @@ class Project(Document):
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    version: int = Field(default=1)
+    
+    def touch(self):
+        self.updated_at = datetime.utcnow()
     
     class Settings:
         name = "projects"
