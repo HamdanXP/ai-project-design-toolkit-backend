@@ -43,6 +43,7 @@ class ScenarioResult(BaseModel):
     component_used: str
     execution_time_ms: Optional[float] = None
     humanitarian_relevance_assessment: str
+    relevance_score: Optional[float] = None
 
 class ComponentTransparency(BaseModel):
     component_type: Literal["llm", "nlp", "none"]
@@ -85,6 +86,27 @@ class SuitabilityAssessment(BaseModel):
     data_quality_assessment: DataQualityAssessment
     recommendations: List[SuitabilityRecommendation]
     performance_estimate: Optional[str] = None
+
+class ScenarioPerformance(BaseModel):
+    scenario_name: str
+    relevance_score: float
+    performance_level: Literal["excellent", "good", "acceptable", "poor"]
+    key_insights: str
+
+class ComponentEffectiveness(BaseModel):
+    component_type: str
+    overall_effectiveness: float
+    strengths: List[str]
+    weaknesses: List[str]
+
+class ScenarioSuitabilityAssessment(BaseModel):
+    is_suitable: bool
+    overall_score: float
+    scenario_performances: List[ScenarioPerformance]
+    component_effectiveness: ComponentEffectiveness
+    humanitarian_relevance: float
+    recommendations: List[SuitabilityRecommendation]
+    performance_summary: str
 
 class EvaluationBypass(BaseModel):
     message: str
@@ -140,6 +162,7 @@ class SimulationResult(BaseModel):
     testing_method: TestingMethod
     confidence_level: ConfidenceLevel
     suitability_assessment: Optional[SuitabilityAssessment] = None
+    scenario_suitability_assessment: Optional[ScenarioSuitabilityAssessment] = None
     scenario_results: Optional[List[ScenarioResult]] = None
     evaluation_bypass: Optional[EvaluationBypass] = None
     component_transparency: Optional[ComponentTransparency] = None

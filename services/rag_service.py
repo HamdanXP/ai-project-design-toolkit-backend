@@ -15,31 +15,67 @@ import os
 import json
 import logging
 import asyncio
+import hashlib
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+class RAGCache:
+    def __init__(self, ttl_hours: int = 24):
+        self.cache = {}
+        self.ttl_hours = ttl_hours
+    
+    def _generate_key(self, *args) -> str:
+        """Generate cache key from arguments"""
+        key_str = '|'.join(str(arg) for arg in args)
+        return hashlib.md5(key_str.encode()).hexdigest()
+    
+    def get(self, *args) -> Optional[Any]:
+        """Get cached value if valid"""
+        key = self._generate_key(*args)
+        
+        if key in self.cache:
+            value, timestamp = self.cache[key]
+            if datetime.now() - timestamp < timedelta(hours=self.ttl_hours):
+                return value
+            else:
+                del self.cache[key]
+        
+        return None
+    
+    def set(self, value: Any, *args) -> None:
+        """Set cached value with timestamp"""
+        key = self._generate_key(*args)
+        self.cache[key] = (value, datetime.now())
+    
+    def clear_expired(self) -> None:
+        """Remove expired cache entries"""
+        current_time = datetime.now()
+        expired_keys = [
+            key for key, (_, timestamp) in self.cache.items()
+            if current_time - timestamp >= timedelta(hours=self.ttl_hours)
+        ]
+        for key in expired_keys:
+            del self.cache[key]
 
 class RAGService:
     """Enhanced Retrieval-Augmented Generation service with folder-based domain organization"""
     
     def __init__(self):
-        self.storage_client = storage.Client()
+        self.storage_client = storage.Client()        
+        self.cache = RAGCache(ttl_hours=24)
         
-        # Main bucket with folder-based organization
         self.main_bucket = settings.gcp_bucket_name
         self.use_cases_bucket = settings.gcp_use_cases_bucket_name
         
-        # Folder paths within main bucket for domain-specific documents
         self.domain_folders = {
             IndexDomain.AI_ETHICS: settings.ai_ethics_folder_path,
             IndexDomain.HUMANITARIAN_CONTEXT: settings.humanitarian_context_folder_path,
             IndexDomain.AI_TECHNICAL: settings.ai_technical_folder_path,
         }
         
-        # GCP Index storage
         self.index_storage = GCPIndexStorage()
         
-        # Domain-specific indexes
         self.indexes = {
             IndexDomain.AI_ETHICS: None,
             IndexDomain.HUMANITARIAN_CONTEXT: None,
@@ -47,7 +83,6 @@ class RAGService:
             IndexDomain.USE_CASES: None,
         }
         
-        # Index names for storage
         self.index_names = {
             IndexDomain.AI_ETHICS: "ai_ethics_knowledge_base",
             IndexDomain.HUMANITARIAN_CONTEXT: "humanitarian_context_knowledge_base",
@@ -55,7 +90,6 @@ class RAGService:
             IndexDomain.USE_CASES: "use_cases_knowledge_base",
         }
         
-        # Chunk limits per domain
         self.chunk_limits = {
             IndexDomain.AI_ETHICS: settings.max_ai_ethics_chunks,
             IndexDomain.HUMANITARIAN_CONTEXT: settings.max_humanitarian_context_chunks,
@@ -63,7 +97,6 @@ class RAGService:
             IndexDomain.USE_CASES: settings.max_use_cases_chunks,
         }
         
-        # Similarity thresholds per domain
         self.similarity_thresholds = {
             IndexDomain.AI_ETHICS: settings.ai_ethics_similarity_threshold,
             IndexDomain.HUMANITARIAN_CONTEXT: settings.humanitarian_context_similarity_threshold,
@@ -78,10 +111,8 @@ class RAGService:
     async def initialize_indexes(self):
         """Initialize all enabled indexes on startup"""
         try:
-            # Initialize use cases index (separate bucket)
             await self._load_or_create_index(IndexDomain.USE_CASES)
             
-            # Initialize domain-specific indexes from folders if enabled
             if settings.enable_ai_ethics_index:
                 await self._load_or_create_index(IndexDomain.AI_ETHICS)
                 
@@ -97,19 +128,27 @@ class RAGService:
             raise
     
     async def get_context_for_reflection(self, project_description: str) -> str:
-        """Get context for reflection phase - combines humanitarian principles with AI ethics"""
+        """Get context for reflection phase - combines humanitarian principles with AI ethics (CACHED)"""
         if not settings.rag_enabled:
             return ""
         
+        cache_key = f"reflection_context_{project_description[:200]}"
+        cached_result = self.cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
         try:
-            # Combine humanitarian context and AI ethics for comprehensive reflection
             contexts = await self._multi_domain_search(
                 query=f"ethical considerations humanitarian AI projects reflection {project_description}",
                 domains=[IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
                 combine_results=True
             )
             
-            return " ".join(contexts) if contexts else ""
+            result = " ".join(contexts) if contexts else ""
+            
+            self.cache.set(result, cache_key)
+            return result
+            
         except Exception as e:
             logger.warning(f"Failed to get reflection context: {e}")
             return ""
@@ -128,7 +167,6 @@ class RAGService:
                 self.chunk_limits[IndexDomain.USE_CASES]
             )
             
-            # Extract structured use cases from response
             use_cases = await self._parse_use_cases_from_context(str(response), project_description)
             logger.info(f"Retrieved {len(use_cases)} use cases from curated repository")
             return use_cases
@@ -145,7 +183,6 @@ class RAGService:
             constraint_text = " ".join([f"{k}:{v}" for k, v in constraints.items()])
             query = f"feasibility assessment humanitarian AI projects {constraint_text} {project_description}"
             
-            # Use both technical and humanitarian context for feasibility
             contexts = await self._multi_domain_search(
                 query=query,
                 domains=[IndexDomain.AI_TECHNICAL, IndexDomain.HUMANITARIAN_CONTEXT],
@@ -175,7 +212,6 @@ class RAGService:
             {project_description}
             """
             
-            # Prioritize AI technical guidance with humanitarian context
             response = await self._query_domain_index(
                 IndexDomain.AI_TECHNICAL, 
                 query, 
@@ -205,7 +241,6 @@ class RAGService:
             EU AI Act NIST UNICEF ethical AI implementation
             """
             
-            # Use dedicated AI ethics folder for precise ethical guidance
             response = await self._query_domain_index(
                 IndexDomain.AI_ETHICS, 
                 query, 
@@ -322,7 +357,6 @@ class RAGService:
             responsible AI governance oversight
             """
             
-            # Combine AI ethics and technical perspectives on monitoring
             contexts = await self._multi_domain_search(
                 query=query,
                 domains=[IndexDomain.AI_ETHICS, IndexDomain.AI_TECHNICAL],
@@ -352,7 +386,6 @@ class RAGService:
             implementation examples practical applications
             """
             
-            # Search both use cases and technical folders for comprehensive examples
             contexts = await self._multi_domain_search(
                 query=query,
                 domains=[IndexDomain.USE_CASES, IndexDomain.AI_TECHNICAL],
@@ -369,19 +402,22 @@ class RAGService:
         question_text: str,
         question_area: str,
         project_description: str,
-        max_sources: int = 2  # Reduced to only get the most relevant
+        max_sources: int = 2
     ) -> List[Dict[str, Any]]:
-        """Get highly relevant guidance sources for a specific question"""
+        """Get highly relevant guidance sources for a specific question (CACHED)"""
         if not settings.rag_enabled:
             return []
         
+        cache_key = f"guidance_{question_area}_{question_text[:100]}_{project_description[:100]}"
+        cached_result = self.cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
         try:
-            # Extract key concepts from the question for targeted search
             search_query = self._build_targeted_query(question_text, project_description)
             
             logger.info(f"Searching for guidance with query: {search_query[:100]}...")
             
-            # Search across relevant domains
             domains_to_search = self._select_relevant_domains(question_area)
             
             all_sources = []
@@ -389,8 +425,7 @@ class RAGService:
                 if self.indexes[domain] is not None:
                     sources = await self._query_domain_index_with_sources(domain, search_query)
                     
-                    # Add domain context to each source
-                    for source in sources[:5]:  # Get more candidates for filtering
+                    for source in sources[:5]:
                         source['guidance_area'] = question_area
                         source['domain_context'] = domain.value
                     
@@ -398,18 +433,20 @@ class RAGService:
             
             if not all_sources:
                 logger.info(f"No sources found for question: {question_text[:50]}...")
-                return []
+                result = []
+            else:
+                relevant_sources = self._evaluate_and_filter_sources(
+                    sources=all_sources,
+                    question_text=question_text,
+                    min_relevance_score=0.7,
+                    max_sources=max_sources
+                )
+                
+                logger.info(f"Filtered to {len(relevant_sources)} highly relevant sources for question")
+                result = relevant_sources
             
-            # Evaluate relevance and filter
-            relevant_sources = self._evaluate_and_filter_sources(
-                sources=all_sources,
-                question_text=question_text,
-                min_relevance_score=0.7,  # Only high-relevance sources
-                max_sources=max_sources
-            )
-            
-            logger.info(f"Filtered to {len(relevant_sources)} highly relevant sources for question")
-            return relevant_sources
+            self.cache.set(result, cache_key)
+            return result
             
         except Exception as e:
             logger.warning(f"Failed to get question-specific guidance: {e}")
@@ -418,28 +455,23 @@ class RAGService:
     def _build_targeted_query(self, question_text: str, project_description: str) -> str:
         """Build a targeted search query from the specific question"""
         
-        # Extract key terms from the question (simple but effective)
         question_lower = question_text.lower()
         
-        # Remove common question words to focus on content
         stopwords = {
             'what', 'how', 'why', 'when', 'where', 'who', 'which', 'can', 'will', 
             'should', 'could', 'would', 'do', 'does', 'is', 'are', 'the', 'a', 'an',
             'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'
         }
         
-        # Extract meaningful terms (longer than 3 chars, not stopwords)
         words = question_text.split()
         key_terms = [
             word.strip('.,?!') for word in words 
             if len(word) > 3 and word.lower().strip('.,?!') not in stopwords
         ]
         
-        # Take top terms + project context
-        main_terms = ' '.join(key_terms[:8])  # Limit to avoid too long queries
-        project_context = project_description[:200]  # Brief project context
+        main_terms = ' '.join(key_terms[:8])
+        project_context = project_description[:200]
         
-        # Build focused query
         query = f"humanitarian AI {main_terms} {project_context} best practices guidance"
         
         return query
@@ -447,7 +479,6 @@ class RAGService:
     def _select_relevant_domains(self, question_area: str) -> List[IndexDomain]:
         """Select most relevant domains based on question area"""
         
-        # Map question areas to most relevant domains
         domain_mapping = {
             "problem_definition": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
             "target_beneficiaries": [IndexDomain.HUMANITARIAN_CONTEXT, IndexDomain.AI_ETHICS],
@@ -471,7 +502,6 @@ class RAGService:
     ) -> float:
         """Calculate relevance score based purely on content quality and keyword relevance"""
         
-        # Extract key terms from question (remove stopwords)
         stopwords = {
             'what', 'how', 'why', 'when', 'where', 'who', 'which', 'can', 'will', 
             'should', 'could', 'would', 'do', 'does', 'is', 'are', 'the', 'a', 'an',
@@ -486,33 +516,27 @@ class RAGService:
         
         content_words = set(content.lower().split())
         
-        # 1. Direct keyword relevance (60% weight)
         keyword_overlap = 0
         if question_words:
             keyword_overlap = len(question_words.intersection(content_words)) / len(question_words)
         
-        # 2. Contextual relevance (40% weight) - Does this content make sense for the question?
         contextual_score = 0
         
-        # Check for humanitarian AI context
         if any(term in content.lower() for term in ['humanitarian', 'aid', 'crisis', 'emergency', 'development']):
             contextual_score += 0.25
         
         if any(term in content.lower() for term in ['artificial intelligence', 'machine learning', 'ai', 'algorithm', 'data']):
             contextual_score += 0.25
         
-        # Check for practical guidance indicators (most important)
         if any(term in content.lower() for term in ['best practice', 'guideline', 'recommendation', 'framework', 'approach', 'method']):
             contextual_score += 0.3
         
-        # Check for specific implementation content
         if any(term in content.lower() for term in ['implementation', 'deploy', 'collect', 'ensure', 'process', 'manage']):
             contextual_score += 0.2
         
-        # Combine scores (keyword relevance is most important)
         final_score = (keyword_overlap * 0.6) + (contextual_score * 0.4)
         
-        return min(final_score, 1.0)  # Cap at 1.0
+        return min(final_score, 1.0)
 
     def _evaluate_and_filter_sources(
         self,
@@ -528,18 +552,15 @@ class RAGService:
         for source in sources:
             content = source.get('content', '')
             
-            # Calculate relevance score based only on content
             relevance_score = self._calculate_relevance_score(
                 question_text=question_text,
                 content=content
             )
             
-            # Only include sources above threshold
             if relevance_score >= min_relevance_score:
                 source['relevance_score'] = relevance_score
                 scored_sources.append(source)
         
-        # Sort by relevance score and return top sources
         scored_sources.sort(key=lambda x: x['relevance_score'], reverse=True)
         
         return scored_sources[:max_sources]
@@ -556,13 +577,11 @@ class RAGService:
             return []
         
         try:
-            # Extract comprehensive project information
             from services.project_analysis_service import ProjectAnalysisService
             project_analyzer = ProjectAnalysisService()
             
             project_info = await project_analyzer.extract_project_info(project_description)
             
-            # Use extracted information, falling back to provided parameters
             extracted_beneficiaries = project_info.get("target_beneficiaries") or target_beneficiaries or None
             extracted_domain = project_info.get("problem_domain") or problem_domain
             geographic_context = project_info.get("geographic_context") or None
@@ -571,7 +590,6 @@ class RAGService:
             
             logger.info(f"Using extracted context: domain={extracted_domain}, beneficiaries={extracted_beneficiaries}")
             
-            # Build balanced queries
             balanced_queries = self._build_balanced_ethics_queries(
                 project_description=project_description,
                 problem_domain=extracted_domain,
@@ -581,7 +599,6 @@ class RAGService:
                 ai_approach_hints=ai_approach_hints
             )
             
-            # Retrieve context with balanced limits
             all_contexts = []
             max_contexts_per_query = 8
             max_total_contexts = 30
@@ -591,17 +608,14 @@ class RAGService:
                     logger.info(f"Retrieving {query_type} context...")
                     
                     try:
-                        # Get contexts with timeout protection
                         ethics_task = self._query_domain_index_with_sources(IndexDomain.AI_ETHICS, query)
                         humanitarian_task = self._query_domain_index_with_sources(IndexDomain.HUMANITARIAN_CONTEXT, query)
                         
-                        # Timeout protection
                         ethics_contexts, humanitarian_contexts = await asyncio.wait_for(
                             asyncio.gather(ethics_task, humanitarian_task, return_exceptions=True),
                             timeout=20.0
                         )
                         
-                        # Add contexts with balanced limits
                         if not isinstance(ethics_contexts, Exception) and ethics_contexts:
                             for context in ethics_contexts[:max_contexts_per_query]:
                                 context['query_type'] = query_type
@@ -623,12 +637,10 @@ class RAGService:
                 logger.warning("No contexts retrieved for ethical considerations")
                 return []
             
-            # Create balanced context
             combined_context = self._create_balanced_context(all_contexts, max_length=6000)
             
             logger.info(f"Using {len(all_contexts)} contexts with {len(combined_context)} characters")
             
-            # Parse with complete approach
             ethical_considerations = await self._parse_complete_ethical_considerations(
                 combined_context=combined_context,
                 project_description=project_description,
@@ -657,7 +669,6 @@ class RAGService:
         beneficiaries_text = target_beneficiaries or "vulnerable populations"
         domain_text = problem_domain or "humanitarian"
         
-        # Get contextual factors
         vulnerability_factors = self._identify_vulnerabilities_from_available_info(
             target_beneficiaries, problem_domain, geographic_context, urgency_level
         )
@@ -665,7 +676,6 @@ class RAGService:
         
         queries = {}
         
-        # PRIORITY 1: Vulnerability protection (always include)
         queries["vulnerability_protection"] = f"""
         specific protection requirements safeguards {beneficiaries_text}
         {' '.join(vulnerability_factors[:4])} humanitarian AI ethical standards
@@ -673,7 +683,6 @@ class RAGService:
         {project_description} beneficiary protection ethical guidelines
         """
         
-        # PRIORITY 2: Sector-specific ethics (always include)
         queries["sector_specific_ethics"] = f"""
         {domain_text} sector specific ethical guidelines standards requirements
         {sector_risks} humanitarian AI implementation ethical requirements
@@ -681,7 +690,6 @@ class RAGService:
         sector-specific ethical considerations {project_description}
         """
         
-        # PRIORITY 3: AI technique ethics (include if hints available)
         if ai_approach_hints:
             queries["ai_technique_ethics"] = f"""
             {ai_approach_hints} specific ethical challenges mitigation strategies humanitarian
@@ -690,7 +698,6 @@ class RAGService:
             {project_description} {ai_approach_hints} ethical implementation guidelines
             """
         
-        # PRIORITY 4: Cultural/contextual (include if geographic context available)
         if geographic_context or (target_beneficiaries and any(term in target_beneficiaries.lower() 
                                  for term in ['refugee', 'displaced', 'multi', 'diverse', 'rural', 'traditional'])):
             cultural_elements = self._extract_cultural_elements(geographic_context, target_beneficiaries)
@@ -701,7 +708,6 @@ class RAGService:
             local context ethical requirements {project_description}
             """
         
-        # PRIORITY 5: Emergency ethics (include if high urgency)
         if urgency_level in ['high', 'critical']:
             queries["emergency_ethics"] = f"""
             emergency humanitarian AI deployment {urgency_level} urgency ethical considerations
@@ -717,26 +723,21 @@ class RAGService:
         combined_parts = []
         current_length = 0
         
-        # Prioritize contexts by type
         priority_order = ['vulnerability_protection', 'sector_specific_ethics', 'ai_technique_ethics', 
                          'cultural_contextual', 'emergency_ethics']
         
-        # Sort contexts by priority
         sorted_contexts = []
         for priority_type in priority_order:
             for context in all_contexts:
                 if context.get('query_type') == priority_type:
                     sorted_contexts.append(context)
         
-        # Add any remaining contexts
         for context in all_contexts:
             if context not in sorted_contexts:
                 sorted_contexts.append(context)
         
-        # Build context with balanced limits
         for i, source in enumerate(sorted_contexts):
-            # Less aggressive truncation - keep more context
-            content = source['content'][:600]  # 600 chars per context
+            content = source['content'][:600]
             
             source_entry = f"[SOURCE_{i}] [{source.get('query_type', 'general')}] {content}"
             
@@ -785,20 +786,17 @@ class RAGService:
     ) -> List[Dict[str, Any]]:
         """Complete parsing with ALL required fields including missing ones"""
         try:
-            # Extract key information
             problem_domain = project_info.get("problem_domain", "humanitarian")
             target_beneficiaries = project_info.get("target_beneficiaries")
             ai_approach_hints = project_info.get("ai_approach_hints")
             urgency_level = project_info.get("urgency_level")
             geographic_context = project_info.get("geographic_context")
             
-            # Create comprehensive source reference
             source_refs = "\n".join([
                 f"SOURCE_{i}: {doc['filename']} (Context: {doc.get('query_type', 'general')}) (from {doc['source_location']})"
                 for i, doc in enumerate(source_documents[:12])
             ])
             
-            # Enhanced context summary
             context_details = []
             if target_beneficiaries:
                 context_details.append(f"Target Beneficiaries: {target_beneficiaries}")
@@ -811,7 +809,6 @@ class RAGService:
             
             context_summary = "\n".join(context_details) if context_details else "Limited context available"
             
-            # Comprehensive prompt with ALL required fields
             prompt = f"""
             You are analyzing ethical requirements for a specific humanitarian AI project.
             
@@ -867,7 +864,6 @@ class RAGService:
             
             response = await llm_service.analyze_text("", prompt)
             
-            # Clean and parse JSON
             cleaned_response = response.strip()
             if cleaned_response.startswith('```json'):
                 cleaned_response = cleaned_response[7:]
@@ -876,11 +872,9 @@ class RAGService:
             
             considerations = json.loads(cleaned_response.strip())
             
-            # Validate and enhance with complete metadata
             validated_considerations = []
             for consideration in considerations:
                 if consideration.get("title") and consideration.get("description"):
-                    # Map source reference to complete metadata
                     source_ref = consideration.get("source_reference", "")
                     if source_ref.startswith("SOURCE_"):
                         try:
@@ -893,7 +887,6 @@ class RAGService:
                                     source_location=source_doc["source_location"]
                                 )
                                 
-                                # Complete metadata update including ALL fields
                                 consideration.update({
                                     "source_filename": source_doc["filename"],
                                     "source_bucket": source_doc["bucket"],
@@ -902,8 +895,8 @@ class RAGService:
                                     "source_domain": source_doc["domain"],
                                     "query_type": source_doc.get("query_type", "general"),
                                     "source_page": source_doc.get("page", ""),
-                                    "source_updated": source_doc.get("updated"),  # No default - can be None
-                                    "source_size": source_doc.get("size"),        # No default - can be None
+                                    "source_updated": source_doc.get("updated"),
+                                    "source_size": source_doc.get("size"),
                                     "source_url": source_url,
                                     "extracted_context": {
                                         "problem_domain": problem_domain,
@@ -916,14 +909,13 @@ class RAGService:
                         except (ValueError, IndexError):
                             pass
                     
-                    # Set minimal defaults - avoid misleading values
                     consideration.setdefault("category", None)
                     consideration.setdefault("priority", None)
                     consideration.setdefault("contextual_factors", [])
                     consideration.setdefault("actionable_steps", [])
-                    consideration.setdefault("source_excerpt", None)        # Can be None if not extracted
-                    consideration.setdefault("beneficiary_impact", None)    # Can be None if not extracted
-                    consideration.setdefault("risk_if_ignored", None)       # Can be None if not extracted
+                    consideration.setdefault("source_excerpt", None)
+                    consideration.setdefault("beneficiary_impact", None)
+                    consideration.setdefault("risk_if_ignored", None)
                     
                     validated_considerations.append(consideration)
             
@@ -1001,7 +993,6 @@ class RAGService:
     ) -> List[str]:
         """Search across multiple domain indexes and optionally combine results"""
         try:
-            # Search all specified domains concurrently
             search_tasks = [
                 self._query_domain_index(domain, query, self.chunk_limits[domain])
                 for domain in domains
@@ -1010,7 +1001,6 @@ class RAGService:
             
             results = await asyncio.gather(*search_tasks, return_exceptions=True)
             
-            # Filter out exceptions and empty results
             valid_results = [
                 str(result) for result in results 
                 if not isinstance(result, Exception) and result
@@ -1055,14 +1045,11 @@ class RAGService:
             retriever = index.as_retriever(similarity_top_k=self.chunk_limits[domain])
             source_nodes = retriever.retrieve(query)
             
-            # Compile context with source tracking
             context_with_sources = []
             for i, node in enumerate(source_nodes):
-                # Determine the source location (folder or bucket)
                 bucket = node.metadata.get("bucket", "")
                 filename = node.metadata.get("filename", "Unknown Document")
                 
-                # For domain folders, include folder info
                 if domain in self.domain_folders:
                     folder_path = self.domain_folders[domain]
                     source_location = f"{bucket}/{folder_path}"
@@ -1078,8 +1065,8 @@ class RAGService:
                     "domain": domain.value,
                     "source_location": source_location,
                     "page": node.metadata.get("page"),
-                    "updated": node.metadata.get("updated"),  # Can be None
-                    "size": node.metadata.get("size")         # Can be None
+                    "updated": node.metadata.get("updated"),
+                    "size": node.metadata.get("size")
                 }
                 context_with_sources.append(source_info)
             
@@ -1090,21 +1077,19 @@ class RAGService:
     
     async def refresh_indexes_if_needed(self):
         """Check if indexes need refresh and update if necessary"""
-        return  # Manual refresh only for now
+        return
     
     async def _load_or_create_index(self, domain: IndexDomain):
         """Load existing index from GCP or create new one for specified domain"""
         try:
             index_name = self.index_names[domain]
             
-            # Try to load existing index from GCP
             storage_context = await self.index_storage.load_storage_context(index_name)
             
             if storage_context:
                 self.indexes[domain] = load_index_from_storage(storage_context)
                 logger.info(f"Loaded existing {domain.value} index from GCP")
             else:
-                # Create new index
                 await self._refresh_domain_index(domain)
         except Exception as e:
             logger.warning(f"Failed to load {domain.value} index from GCP, creating new: {e}")
@@ -1129,10 +1114,8 @@ class RAGService:
         """Load documents for a specific domain (either from folder or separate bucket)"""
         try:
             if domain == IndexDomain.USE_CASES:
-                # Load from separate use cases bucket
                 return await self._load_documents_from_bucket(self.use_cases_bucket)
             else:
-                # Load from folder within main bucket
                 folder_path = self.domain_folders.get(domain)
                 if not folder_path:
                     logger.warning(f"No folder path configured for domain {domain.value}")
@@ -1148,12 +1131,10 @@ class RAGService:
         try:
             bucket = self.storage_client.bucket(bucket_name)
             
-            # List blobs with the folder prefix
             blobs = list(bucket.list_blobs(prefix=folder_path))
             
             documents = []
             for blob in blobs:
-                # Skip folder "directories" (they end with /)
                 if blob.name.endswith('/'):
                     continue
                     
@@ -1164,7 +1145,7 @@ class RAGService:
                             doc = Document(
                                 text=content,
                                 metadata={
-                                    "filename": blob.name.replace(folder_path, ""),  # Remove folder prefix
+                                    "filename": blob.name.replace(folder_path, ""),
                                     "full_path": blob.name,
                                     "bucket": bucket_name,
                                     "folder": folder_path,
@@ -1294,7 +1275,6 @@ class RAGService:
             
             response = await llm_service.analyze_text("", prompt)
             
-            # Clean and parse JSON
             cleaned_response = response.strip()
             if cleaned_response.startswith('```json'):
                 cleaned_response = cleaned_response[7:]
@@ -1303,15 +1283,13 @@ class RAGService:
             
             use_cases = json.loads(cleaned_response.strip())
             
-            # Validate and enhance use cases with minimal defaults
             validated_cases = []
             for uc in use_cases:
                 if uc.get("title") and uc.get("description"):
-                    # Add missing fields with minimal defaults
                     uc.setdefault("source", "Use Cases Repository")
                     uc.setdefault("source_url", "")
                     uc.setdefault("type", "use_case_repository")
-                    uc.setdefault("data_completeness", None)  # Can be None
+                    uc.setdefault("data_completeness", None)
                     uc.setdefault("technical_requirements", [])
                     uc.setdefault("success_factors", [])
                     uc.setdefault("challenges", [])
@@ -1336,7 +1314,6 @@ class RAGService:
                 metadata = await self.index_storage.get_index_metadata(index_name)
                 index_info[index_name] = metadata
             
-            # Add domain-specific information
             domain_info = {}
             for domain, index in self.indexes.items():
                 if domain == IndexDomain.USE_CASES:
@@ -1370,7 +1347,6 @@ class RAGService:
         try:
             logger.info("Force refreshing all indexes...")
             
-            # Refresh all enabled indexes
             refresh_tasks = []
             
             for domain in self.indexes.keys():

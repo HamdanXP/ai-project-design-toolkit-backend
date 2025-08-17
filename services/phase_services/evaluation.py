@@ -1,14 +1,15 @@
-from datetime import datetime, time
+from datetime import datetime
 import json
 import logging
 from typing import Dict, Any, List, Optional
+import time
 
 from openai import AsyncOpenAI
 from config import settings
 from core.llm_service import llm_service
 from models.project import Project
 from models.evaluation import (
-    ComponentTransparency, EvaluationContext, ScenarioResult, SimulationResult, EvaluationResult, TestingMethod,
+    ComponentEffectiveness, ComponentTransparency, EvaluationContext, ScenarioPerformance, ScenarioResult, ScenarioSuitabilityAssessment, SimulationResult, EvaluationResult, TestingMethod,
     SimulationCapabilities, TestingScenario, ExampleScenario,
     SimulationExplanation, EvaluationSummary,
     ScenarioRegenerationRequest, ProjectDownloads, DownloadableFile,
@@ -72,13 +73,16 @@ class EvaluationService:
     def _determine_evaluation_approach(self, selected_solution: Dict[str, Any]) -> EvaluationApproach:
         needs_dataset = selected_solution.get("needs_dataset", False)
         dataset_type = selected_solution.get("dataset_type")
+        llm_requirements = selected_solution.get('llm_requirements')
+        nlp_requirements = selected_solution.get('nlp_requirements')
         
-        if not needs_dataset:
+        if llm_requirements or nlp_requirements:
             return EvaluationApproach.SCENARIO_BASED
-        elif dataset_type == "tabular":
+        
+        if needs_dataset and dataset_type == "tabular":
             return EvaluationApproach.DATASET_ANALYSIS
-        else:
-            return EvaluationApproach.EVALUATION_BYPASS
+        
+        return EvaluationApproach.EVALUATION_BYPASS
 
     def _determine_simulation_capabilities(self, selected_solution: Dict[str, Any]) -> SimulationCapabilities:
         ai_technique = selected_solution.get('ai_technique', '')
@@ -166,11 +170,13 @@ class EvaluationService:
         )
     
     async def simulate_without_dataset(self, project: Project) -> SimulationResult:
-        generated_project_data = project.development_data["generated_project"]
         selected_solution = self._get_full_selected_solution(project)
         
         llm_requirements = selected_solution.get('llm_requirements')
         nlp_requirements = selected_solution.get('nlp_requirements')
+        
+        scenario_results = None
+        scenario_suitability_assessment = None
         
         if llm_requirements:
             scenario_results = await self._test_llm_scenarios(project, llm_requirements)
@@ -186,8 +192,10 @@ class EvaluationService:
                 processing_approach=nlp_requirements.get('processing_approach')
             )
         else:
-            scenario_results = await self._generate_fallback_scenarios(project, selected_solution)
             component_transparency = ComponentTransparency(component_type="none")
+        
+        if scenario_results:
+            scenario_suitability_assessment = await self._create_scenario_suitability_assessment(scenario_results, project)
         
         simulation_explanation = self._create_simulation_explanation(TestingMethod.SCENARIOS, None)
         
@@ -196,25 +204,10 @@ class EvaluationService:
             testing_method=TestingMethod.SCENARIOS,
             scenario_results=scenario_results,
             component_transparency=component_transparency,
-            confidence_level=ConfidenceLevel.MEDIUM,
-            simulation_explanation=simulation_explanation
+            confidence_level=ConfidenceLevel.MEDIUM if scenario_results else ConfidenceLevel.LOW,
+            simulation_explanation=simulation_explanation,
+            scenario_suitability_assessment=scenario_suitability_assessment
         )
-
-    async def _generate_fallback_scenarios(self, project: Project, selected_solution: Dict[str, Any]) -> List[ScenarioResult]:
-        scenarios = await self._generate_testing_scenarios(project, project.development_data["generated_project"], 
-                                                        selected_solution)
-
-        results = []
-        for scenario in scenarios:
-            results.append(ScenarioResult(
-                scenario_name=scenario.name,
-                input_provided=scenario.input_description,
-                actual_output=scenario.expected_outcome,
-                component_used="Theoretical Analysis",
-                humanitarian_relevance_assessment="This solution requires manual testing with actual implementation"
-            ))
-        
-        return results
 
     async def _test_llm_scenarios(self, project: Project, llm_requirements: Dict[str, Any]) -> List[ScenarioResult]:
         scenarios = await self._generate_testing_scenarios(project, project.development_data["generated_project"], 
@@ -242,15 +235,16 @@ class EvaluationService:
                 execution_time = (time.time() - start_time) * 1000
                 actual_output = response.choices[0].message.content
                 
-                relevance = await self._assess_output_relevance(scenario, actual_output, project)
-                
+                assessment, score = await self._assess_output_relevance(scenario, actual_output, project)
+
                 results.append(ScenarioResult(
                     scenario_name=scenario.name,
                     input_provided=scenario.input_description,
                     actual_output=actual_output,
-                    component_used="LLM System Prompt",
+                    component_used="NLP Processing Simulation", 
                     execution_time_ms=execution_time,
-                    humanitarian_relevance_assessment=relevance
+                    humanitarian_relevance_assessment=assessment,
+                    relevance_score=score
                 ))
                 
             except Exception as e:
@@ -259,7 +253,8 @@ class EvaluationService:
                     input_provided=scenario.input_description,
                     actual_output=f"Error: {str(e)}",
                     component_used="LLM System Prompt",
-                    humanitarian_relevance_assessment="Could not evaluate due to execution error"
+                    humanitarian_relevance_assessment="Could not evaluate due to simulation error",
+                    relevance_score=0.0
                 ))
         
         return results
@@ -287,41 +282,254 @@ class EvaluationService:
                 actual_output = await llm_service.analyze_text("", prompt)
                 
                 execution_time = (time.time() - start_time) * 1000
-                relevance = await self._assess_output_relevance(scenario, actual_output, project)
+                assessment, score = await self._assess_output_relevance(scenario, actual_output, project)
                 
                 results.append(ScenarioResult(
                     scenario_name=scenario.name,
                     input_provided=scenario.input_description,
                     actual_output=actual_output,
-                    component_used="NLP Processing Simulation",
+                    component_used="LLM System Prompt",
                     execution_time_ms=execution_time,
-                    humanitarian_relevance_assessment=relevance
+                    humanitarian_relevance_assessment=assessment,
+                    relevance_score=score
                 ))
-                
+                                
             except Exception as e:
                 results.append(ScenarioResult(
                     scenario_name=scenario.name,
                     input_provided=scenario.input_description,
                     actual_output=f"Error: {str(e)}",
                     component_used="NLP Processing Simulation",
-                    humanitarian_relevance_assessment="Could not evaluate due to simulation error"
+                    humanitarian_relevance_assessment="Could not evaluate due to execution error",
+                    relevance_score=0.0                    
                 ))
         
         return results
 
-    async def _assess_output_relevance(self, scenario: TestingScenario, actual_output: str, project: Project) -> str:
+    async def _assess_output_relevance(self, scenario: TestingScenario, actual_output: str, project: Project) -> tuple[str, float]:
         prompt = f"""
-        Assess this AI output for humanitarian relevance:
+        Evaluate this AI output for humanitarian relevance using comprehensive criteria:
         
-        Scenario: {scenario.name}
-        Expected Outcome: {scenario.expected_outcome}
-        Actual Output: {actual_output}
-        Project Context: {project.description}
+        SCENARIO CONTEXT:
+        - Scenario: {scenario.name}
+        - Expected outcome: {scenario.expected_outcome}
+        - Humanitarian purpose: {scenario.humanitarian_impact}
         
-        Provide a brief assessment of whether the output meets humanitarian expectations.
+        ACTUAL AI OUTPUT:
+        {actual_output}
+        
+        PROJECT CONTEXT: {project.description}
+        
+        EVALUATION CRITERIA (each 0-1 scale):
+        1. RELEVANCE: Does output directly address the humanitarian need described?
+        2. ACCURACY: Is information factually correct and reliable?
+        3. APPROPRIATENESS: Is tone, language, and approach suitable for humanitarian context?
+        4. ACTIONABILITY: Can humanitarian professionals use this output practically?
+        5. CULTURAL SENSITIVITY: Does it respect diverse communities and contexts?
+        6. SAFETY: Does it avoid potential harm or misinterpretation?
+        
+        SCORING GUIDELINES:
+        - 0.9-1.0: Exceptional humanitarian value, ready for field use
+        - 0.7-0.8: Good quality, minor refinements needed
+        - 0.5-0.6: Acceptable baseline, significant improvements needed
+        - 0.3-0.4: Below standard, major issues present
+        - 0.0-0.2: Inappropriate or harmful for humanitarian use
+        
+        Respond with JSON:
+        {{
+            "assessment": "specific evaluation highlighting strengths and weaknesses",
+            "score": suitable score from 0.0 to 1.0,
+            "key_issues": ["specific issue 1", "specific issue 2"],
+            "strengths": ["specific strength 1", "specific strength 2"]
+        }}
         """
         
-        return await llm_service.analyze_text("", prompt)
+        try:
+            response = await llm_service.analyze_text("", prompt)
+            data = self._extract_json_from_response(response)
+            
+            assessment = data.get("assessment", "Could not assess relevance")
+            score = float(data.get("score", 0.5))
+            score = max(0.0, min(1.0, score))
+            
+            # Enhance assessment with key issues/strengths if available
+            issues = data.get("key_issues", [])
+            strengths = data.get("strengths", [])
+            
+            if issues or strengths:
+                assessment += f"\nKey issues: {', '.join(issues)}" if issues else ""
+                assessment += f"\nStrengths: {', '.join(strengths)}" if strengths else ""
+            
+            return assessment, score
+        except Exception as e:
+            logger.error(f"Failed to assess output relevance: {e}")
+            return "Assessment failed", 0.5
+    
+    async def _create_scenario_suitability_assessment(self, scenario_results: List[ScenarioResult], project: Project) -> ScenarioSuitabilityAssessment:
+        valid_scores = [r.relevance_score for r in scenario_results if r.relevance_score is not None]
+        
+        if not valid_scores:
+            overall_score = 0.5
+        else:
+            overall_score = sum(valid_scores) / len(valid_scores)
+        
+        # Create individual scenario performance breakdown
+        scenario_performances = []
+        for result in scenario_results:
+            if result.relevance_score is not None:
+                if result.relevance_score >= 0.8:
+                    level = "excellent"
+                elif result.relevance_score >= 0.7:
+                    level = "good"
+                elif result.relevance_score >= 0.5:
+                    level = "acceptable"
+                else:
+                    level = "poor"
+                
+                scenario_performances.append(ScenarioPerformance(
+                    scenario_name=result.scenario_name,
+                    relevance_score=result.relevance_score,
+                    performance_level=level,
+                    key_insights=result.humanitarian_relevance_assessment[:100] + "..."
+                ))
+        
+        # Assess component effectiveness
+        component_type = scenario_results[0].component_used if scenario_results else "Unknown"
+        
+        strengths = []
+        weaknesses = []
+        
+        excellent_count = len([p for p in scenario_performances if p.performance_level == "excellent"])
+        good_count = len([p for p in scenario_performances if p.performance_level == "good"])
+        poor_count = len([p for p in scenario_performances if p.performance_level == "poor"])
+        
+        if excellent_count > 0:
+            strengths.append(f"Excellent performance in {excellent_count} scenarios")
+        if good_count > 0:
+            strengths.append(f"Good humanitarian relevance across {good_count} scenarios")
+        
+        if poor_count > 0:
+            weaknesses.append(f"Suboptimal performance in {poor_count} scenarios")
+        
+        component_effectiveness = ComponentEffectiveness(
+            component_type=component_type,
+            overall_effectiveness=overall_score,
+            strengths=strengths or ["Component completed all test scenarios"],
+            weaknesses=weaknesses or ["No significant issues identified"]
+        )
+        
+        # Generate recommendations
+        recommendations = await self._generate_scenario_recommendations(scenario_results, project, overall_score)
+        
+        is_suitable = overall_score >= 0.7
+        humanitarian_relevance = overall_score  # Direct mapping for scenarios
+        
+        performance_summary = f"Tested {len(scenario_results)} scenarios with {overall_score:.1%} average humanitarian relevance"
+        
+        return ScenarioSuitabilityAssessment(
+            is_suitable=is_suitable,
+            overall_score=overall_score,
+            scenario_performances=scenario_performances,
+            component_effectiveness=component_effectiveness,
+            humanitarian_relevance=humanitarian_relevance,
+            recommendations=recommendations,
+            performance_summary=performance_summary
+        )
+
+    async def _generate_scenario_recommendations(self, scenario_results: List[ScenarioResult], project: Project, overall_score: float) -> List[SuitabilityRecommendation]:
+        
+        poor_scenarios = [r for r in scenario_results if r.relevance_score and r.relevance_score < 0.7]
+        
+        if not poor_scenarios:
+            return []
+        
+        # Analyze failure patterns
+        failure_analysis = []
+        for scenario in poor_scenarios[:3]:
+            failure_analysis.append({
+                "scenario": scenario.scenario_name,
+                "score": scenario.relevance_score,
+                "issues": scenario.humanitarian_relevance_assessment,
+                "output_sample": scenario.actual_output[:200] + "..." if len(scenario.actual_output) > 200 else scenario.actual_output
+            })
+        
+        prompt = f"""
+        You are an expert in humanitarian AI systems. Analyze testing failures and provide actionable recommendations.
+        
+        PROJECT: {project.description}
+        OVERALL PERFORMANCE: {overall_score:.1%} across {len(scenario_results)} scenarios
+        FAILED SCENARIOS: {len(poor_scenarios)} scenarios scored below 70%
+        
+        FAILURE ANALYSIS:
+        {self._format_failure_analysis(failure_analysis)}
+        
+        TASK: Generate specific, actionable recommendations for a humanitarian professional to improve their AI solution.
+        
+        FOCUS AREAS TO CONSIDER:
+        - Prompt refinement for better humanitarian context
+        - Training data improvements
+        - Cultural sensitivity adjustments
+        - Output format modifications
+        - Safety and bias mitigation
+        - Alternative AI approaches better suited for humanitarian work
+        
+        RECOMMENDATION TYPES:
+        - "improvement": Refine current approach
+        - "solution_alternative": Try different AI technique
+        - "data_collection": Gather better training examples
+        
+        QUALITY STANDARDS:
+        - Be specific about what needs changing
+        - Explain WHY the change will help
+        - Focus on humanitarian impact
+        - Avoid technical jargon
+        - Provide concrete next steps
+        
+        Respond with JSON:
+        {{
+            "recommendations": [
+                {{
+                    "type": "improvement",
+                    "priority": "high",
+                    "issue": "Specific problem observed in testing",
+                    "suggestion": "Concrete action with clear humanitarian benefit",
+                    "rationale": "Why this will improve humanitarian effectiveness"
+                }}
+            ]
+        }}
+        
+        Generate 1-3 high-quality recommendations based on actual failure patterns.
+        """
+        
+        try:
+            response = await llm_service.analyze_text("", prompt)
+            data = self._extract_json_from_response(response)
+            
+            recommendations = []
+            for rec in data.get("recommendations", []):
+                recommendations.append(SuitabilityRecommendation(
+                    type=rec.get("type", "improvement"),
+                    priority=rec.get("priority", "medium"),
+                    issue=rec.get("issue", ""),
+                    suggestion=rec.get("suggestion", "")
+                ))
+            
+            return recommendations
+        except Exception as e:
+            logger.error(f"Failed to generate recommendations: {e}")
+            return []
+
+    def _format_failure_analysis(self, failure_analysis: List[Dict]) -> str:
+        formatted = []
+        for i, failure in enumerate(failure_analysis, 1):
+            formatted.append(f"""
+            FAILURE {i}:
+            - Scenario: {failure['scenario']}
+            - Score: {failure['score']:.1%}
+            - Issues: {failure['issues']}
+            - Sample Output: "{failure['output_sample']}"
+            """)
+        return '\n'.join(formatted)
 
     async def _assess_dataset_suitability(
         self, 
@@ -783,48 +991,97 @@ class EvaluationService:
         evaluation_summary: EvaluationSummary
     ) -> str:
         
-        if not simulation_result.suitability_assessment:
+        # Handle both dataset and scenario assessments
+        if simulation_result.suitability_assessment:
+            return await self._generate_dataset_feedback(project, simulation_result, evaluation_summary)
+        elif simulation_result.scenario_suitability_assessment:
+            return await self._generate_scenario_feedback(project, simulation_result, evaluation_summary)
+        else:
             return "Consider requesting a different AI approach that better fits your project requirements."
-        
+
+    async def _generate_dataset_feedback(self, project: Project, simulation_result: SimulationResult, evaluation_summary: EvaluationSummary) -> str:
         assessment = simulation_result.suitability_assessment
         
-        context = {
-            "project_description": project.description,
-            "current_technique": project.development_data.get("selected_solution", {}).get("ai_technique", ""),
-            "is_suitable": assessment.is_suitable,
-            "overall_score": assessment.overall_score,
-            "compatibility_issues": not assessment.feature_compatibility.compatible,
-            "volume_issues": not assessment.data_volume_assessment.sufficient,
-            "quality_issues": assessment.data_quality_assessment.quality_score < 0.7,
-            "available_features": assessment.feature_compatibility.available_required,
-            "missing_features": assessment.feature_compatibility.missing_required,
-            "data_rows": assessment.data_volume_assessment.available_rows,
-            "recommendations": assessment.recommendations
-        }
-        
         prompt = f"""
-        Generate comprehensive development feedback for a humanitarian professional to use when requesting a new AI solution.
+        Generate development feedback for requesting a new AI solution based on dataset compatibility issues.
         
         CURRENT SITUATION:
-        - Project: {context['project_description']}
-        - Current AI approach: {context['current_technique']}
-        - Overall suitability: {context['overall_score']:.1%}
-        - Compatible with data: {not context['compatibility_issues']}
-        - Sufficient data volume: {not context['volume_issues']}
-        - Good data quality: {not context['quality_issues']}
+        - Project: {project.description}
+        - Current approach failed with {assessment.overall_score:.1%} compatibility
+        - Data characteristics: {assessment.data_volume_assessment.available_rows} rows
+        - Missing features: {', '.join(assessment.feature_compatibility.missing_required)}
+        - Quality score: {assessment.data_quality_assessment.quality_score:.1%}
         
-        SPECIFIC ISSUES:
-        {self._format_issues_for_prompt(context)}
+        HIGH-PRIORITY ISSUES:
+        {self._extract_priority_issues(assessment)}
         
-        Generate a single, coherent paragraph that the user can include when requesting a new solution.
-        Write it as direct user requirements, not as instructions to a developer.
-        Focus on what they need based on their data constraints and humanitarian context.
+        TASK: Write a clear, specific request for a new AI solution that addresses these data constraints.
         
-        Example format: "I need an AI solution that works effectively with [specific constraints] and can handle [specific challenges]. My dataset has [characteristics] and the solution should [requirements]."
+        REQUIREMENTS:
+        - Write as direct user requirements (first person: "I need...")
+        - Be specific about data limitations discovered
+        - Mention humanitarian context and goals
+        - Focus on what will work with available data
+        - Avoid technical jargon
+        
+        EXAMPLE FORMAT:
+        "I need an AI solution for [humanitarian goal] that works effectively with [data constraints]. My dataset has [specific characteristics] and the solution should [specific requirements based on limitations found]."
+        
+        Generate a single, coherent paragraph (3-4 sentences max).
         """
         
         response = await llm_service.analyze_text("", prompt)
         return response.strip()
+
+    async def _generate_scenario_feedback(self, project: Project, simulation_result: SimulationResult, evaluation_summary: EvaluationSummary) -> str:
+        assessment = simulation_result.scenario_suitability_assessment
+        poor_scenarios = [p for p in assessment.scenario_performances if p.performance_level in ["poor", "acceptable"]]
+        
+        prompt = f"""
+        Generate development feedback for requesting a new AI solution based on scenario testing failures.
+        
+        CURRENT SITUATION:
+        - Project: {project.description}
+        - Testing showed {assessment.overall_score:.1%} effectiveness
+        - Component type: {assessment.component_effectiveness.component_type}
+        - Failed scenarios: {len(poor_scenarios)} out of {len(assessment.scenario_performances)}
+        
+        PERFORMANCE ISSUES:
+        {self._extract_scenario_issues(poor_scenarios)}
+        
+        COMPONENT WEAKNESSES:
+        {'; '.join(assessment.component_effectiveness.weaknesses)}
+        
+        TASK: Write a clear request for a new AI solution that addresses these performance gaps.
+        
+        REQUIREMENTS:
+        - Write as user requirements (first person: "I need...")
+        - Specify humanitarian contexts where current solution failed
+        - Mention desired capabilities based on failed scenarios
+        - Focus on humanitarian effectiveness over technical metrics
+        - Be specific about what didn't work
+        
+        EXAMPLE FORMAT:
+        "I need an AI solution for [humanitarian goal] that can effectively handle [specific scenarios that failed]. The current approach struggles with [specific issues found] and I need something that [specific improvements needed for humanitarian work]."
+        
+        Generate a single, coherent paragraph (3-4 sentences max).
+        """
+        
+        response = await llm_service.analyze_text("", prompt)
+        return response.strip()
+
+    def _extract_priority_issues(self, assessment: SuitabilityAssessment) -> str:
+        issues = []
+        high_priority_recs = [r for r in assessment.recommendations if r.priority == "high"]
+        for rec in high_priority_recs[:3]:
+            issues.append(f"- {rec.issue}")
+        return '\n'.join(issues) if issues else "- General compatibility improvements needed"
+
+    def _extract_scenario_issues(self, poor_scenarios: List) -> str:
+        issues = []
+        for scenario in poor_scenarios[:3]:
+            issues.append(f"- {scenario.scenario_name}: {scenario.key_insights}")
+        return '\n'.join(issues) if issues else "- General performance improvements needed"
 
     def _format_issues_for_prompt(self, context: Dict[str, Any]) -> str:
         issues = []
@@ -889,8 +1146,8 @@ class EvaluationService:
                 
                 areas_for_improvement = [rec.suggestion for rec in assessment.recommendations if rec.priority == "high"]
         
-        elif simulation_result.scenarios:
-            scenario_count = len(simulation_result.scenarios)
+        elif simulation_result.scenario_results:
+            scenario_count = len(simulation_result.scenario_results)
             overall_assessment = f"Scenario testing shows capability across {scenario_count} humanitarian use cases"
             deployment_readiness = True
             recommendation = "Solution demonstrates good potential for humanitarian applications"
@@ -926,15 +1183,21 @@ class EvaluationService:
             areas_for_improvement=areas_for_improvement
         )
     
-    def _determine_evaluation_status(
-        self, 
-        simulation_result: SimulationResult, 
-        evaluation_summary: EvaluationSummary
-    ) -> str:
-        
+    def _determine_evaluation_status(self, simulation_result: SimulationResult, evaluation_summary: EvaluationSummary) -> str:
         if evaluation_summary.deployment_readiness:
-            if simulation_result.suitability_assessment and simulation_result.suitability_assessment.overall_score >= 0.8:
-                return "ready_for_deployment"
+            # For dataset-based evaluation
+            if simulation_result.suitability_assessment:
+                if simulation_result.suitability_assessment.overall_score >= 0.7:
+                    return "ready_for_deployment"
+                else:
+                    return "needs_minor_improvements"
+                
+            # For scenario-based evaluation
+            elif simulation_result.scenario_suitability_assessment:
+                if simulation_result.scenario_suitability_assessment.overall_score >= 0.7:
+                    return "ready_for_deployment"
+                else:
+                    return "needs_minor_improvements"
             else:
                 return "needs_minor_improvements"
         else:

@@ -13,6 +13,7 @@ from models.project import (
 import services.project_service as project_service
 import json
 import logging
+import asyncio
 import core as ctx
 
 logger = logging.getLogger(__name__)
@@ -154,23 +155,55 @@ class ReflectionService:
         questions: Dict[str, str]
     ) -> Dict[str, Any]:
         """
-        Create comprehensive project readiness assessment
+        Create comprehensive project readiness assessment with parallel LLM calls
         """
         
         context = await ctx.rag_service.get_context_for_reflection(project_description)
         qa_context = self._build_qa_context(answers, questions)
         
-        assessment_data = await self._perform_core_assessment(
+        core_assessment_task = self._perform_core_assessment(
             project_description, qa_context, context
         )
+        answer_quality_task = self._analyze_answer_quality(
+            answers, questions, qa_context
+        )
+        
+        assessment_data, question_flags = await asyncio.gather(
+            core_assessment_task,
+            answer_quality_task,
+            return_exceptions=True
+        )
+        
+        if isinstance(assessment_data, Exception):
+            logger.error(f"Core assessment failed: {assessment_data}")
+            assessment_data = self._get_fallback_assessment()
+        
+        if isinstance(question_flags, Exception):
+            logger.error(f"Answer quality analysis failed: {question_flags}")
+            question_flags = []
         
         alternatives = await self._generate_alternatives_if_needed(
             project_description, qa_context, assessment_data["ai_recommendation"]
         )
         
-        final_assessment = await self._finalize_assessment(assessment_data, alternatives, answers, questions)
+        final_assessment = await self._finalize_assessment(
+            assessment_data, alternatives, answers, questions, question_flags
+        )
         
         return self._create_response_objects(final_assessment)
+
+    def _get_fallback_assessment(self) -> Dict[str, Any]:
+        """Fallback assessment data in case of LLM failure"""
+        return {
+            "ethical_score": 0.5,
+            "ethical_summary": "Assessment could not be completed due to technical issues",
+            "ai_appropriateness_score": 0.5,
+            "ai_appropriateness_summary": "Assessment could not be completed due to technical issues",
+            "ai_recommendation": "appropriate",
+            "overall_summary": "Please try again or contact support",
+            "key_concerns": ["Technical assessment failure"],
+            "actionable_next_steps": ["Retry assessment", "Review responses"]
+        }
 
     async def _perform_core_assessment(
         self, 
@@ -183,52 +216,51 @@ class ReflectionService:
         """
         
         prompt = f"""
-        You are assessing a humanitarian professional's readiness to learn about and develop AI projects responsibly. Focus on their awareness, engagement, and willingness to consider important factors rather than expecting expertise.
+        Assess a humanitarian professional's readiness to develop AI projects responsibly. Focus on awareness and engagement, not expertise.
 
         HUMANITARIAN KNOWLEDGE BASE: {context}
 
         PROJECT: {project_description}
 
-        USER RESPONSES (each 150-1200 characters, from non-technical humanitarian professionals):
+        USER RESPONSES:
         {qa_context}
 
         ASSESSMENT FRAMEWORK:
 
-        ETHICAL AWARENESS (0.0-1.0) - Look for recognition and engagement with:
-        • Harm consideration: Do they acknowledge potential negative impacts, even if not detailed?
-        • Beneficiary awareness: Do they show consideration for affected communities?
-        • Cultural sensitivity: Do they recognize the importance of local context?
-        • Data responsibility: Do they show awareness of privacy and consent issues?
-        • Learning mindset: Are they open to ethical considerations and feedback?
+        ETHICAL AWARENESS (0.0-1.0):
+        - Harm consideration: Do they acknowledge potential negative impacts?
+        - Beneficiary awareness: Do they show consideration for affected communities?
+        - Cultural sensitivity: Do they recognize importance of local context?
+        - Data responsibility: Do they show awareness of privacy and consent?
+        - Learning mindset: Are they open to ethical considerations?
 
-        AI APPROPRIATENESS (0.0-1.0) - Evaluate practical thinking about:
-        • Problem understanding: Do they articulate why AI might help their specific situation?
-        • Resource awareness: Do they recognize what they need (data, skills, support)?
-        • Complexity recognition: Do they understand AI projects require effort and expertise?
-        • Alternative consideration: Are they open to simpler solutions if appropriate?
+        AI APPROPRIATENESS (0.0-1.0):
+        - Problem understanding: Do they articulate why AI might help?
+        - Resource awareness: Do they recognize what they need (data, skills, support)?
+        - Complexity recognition: Do they understand AI projects require effort and expertise?
+        - Alternative consideration: Are they open to simpler solutions?
 
-        SCORING GUIDE for learning professionals:
-        0.6-1.0: Shows thoughtful engagement and awareness of key considerations (ready to proceed with guidance)
-        0.4-0.5: Basic engagement but needs more reflection on important factors
-        0.0-0.3: Minimal engagement or awareness of humanitarian AI responsibilities
+        SCORING GUIDE:
+        0.6-1.0: Shows thoughtful engagement and awareness (ready to proceed with guidance)
+        0.4-0.5: Shows awareness but lacks depth in key areas - needs guided reflection before proceeding
+        0.0-0.3: Minimal engagement or awareness of responsibilities
 
-        ASSESSMENT FOCUS:
-        Good indicators: Acknowledges complexity, asks questions, shows concern for beneficiaries, recognizes need for help
-        Concerning: Dismisses ethical concerns, unrealistic expectations, no consideration of harm or alternatives
+        GOOD INDICATORS: Acknowledges complexity, shows concern for beneficiaries, recognizes need for help
+        CONCERNING: Dismisses ethical concerns, unrealistic expectations, no consideration of harm
 
-        Return JSON focusing on readiness to learn responsibly:
+        Return JSON:
         {{
             "ethical_score": 0.0,
-            "ethical_summary": "Assessment of their ethical awareness and engagement with humanitarian considerations",
+            "ethical_summary": "Assessment of their ethical awareness and engagement",
             "ai_appropriateness_score": 0.0,
-            "ai_appropriateness_summary": "Assessment of their practical thinking about AI necessity and complexity", 
+            "ai_appropriateness_summary": "Assessment of their practical thinking about AI necessity", 
             "ai_recommendation": "highly_appropriate|appropriate|questionable|not_appropriate",
             "overall_summary": "Overall readiness assessment focused on responsible learning approach",
-            "key_concerns": ["Areas where they need more awareness or consideration"],
+            "key_concerns": ["Areas where they need more awareness"],
             "actionable_next_steps": ["Specific learning steps to strengthen their approach"]
         }}
         """
-        
+
         response = await llm_service.analyze_text("", prompt)
         cleaned_response = self._clean_json_response(response)
         return json.loads(cleaned_response)
@@ -247,37 +279,22 @@ class ReflectionService:
             return []
             
         prompt = f"""
-        Review these humanitarian project reflection responses for quality and completeness. Flag responses that show gaps in understanding or awareness.
+        Review these humanitarian project responses for quality gaps that need attention.
 
         QUESTIONS AND ANSWERS:
         {qa_context}
 
-        For each answer, assess if it adequately addresses the question's intent. Use these severity levels:
+        Flag responses showing gaps in understanding or awareness:
 
-        HIGH SEVERITY (critical gaps):
-        • Dismissive attitudes toward ethical considerations or potential harms
-        • Unrealistic expectations showing no understanding of AI complexity
-        • Complete avoidance of the question or purely superficial responses
-        • No awareness of vulnerable populations when specifically asked about them
+        HIGH: Dismissive of ethics, unrealistic expectations, complete avoidance of questions
+        MEDIUM: Vague responses missing humanitarian considerations, limited complexity awareness
+        LOW: Good intent but needs more specificity or depth
 
-        MEDIUM SEVERITY (notable gaps):
-        • Vague responses that partially address the question but lack depth
-        • Shows some awareness but misses important humanitarian considerations
-        • Limited understanding of complexity or potential challenges
-        • Decent intent but insufficient consideration of key factors
+        DON'T FLAG: Thoughtful responses, acknowledges uncertainty, shows genuine concern for beneficiaries
 
-        LOW SEVERITY (minor gaps):
-        • Generally good response but could benefit from more detail
-        • Shows understanding but minor areas for improvement
-        • Good awareness but could be more specific about implementation
+        Note: Brief responses can still be thoughtful - focus on engagement quality, not length.
 
-        DON'T FLAG (good responses):
-        • Thoughtful consideration of issues, even if not expert-level
-        • Acknowledgment of uncertainty or need for help
-        • Shows awareness of potential problems or complexity
-        • Demonstrates genuine concern for beneficiaries
-
-        Return JSON array of flags only for responses needing attention:
+        Return JSON array of flags for responses needing attention:
         [
             {{
                 "question_key": "question_identifier",
@@ -289,7 +306,7 @@ class ReflectionService:
 
         Return empty array [] if no responses need flagging.
         """
-        
+
         response = await llm_service.analyze_text("", prompt)
         cleaned_response = self._clean_json_response(response)
         
@@ -304,7 +321,8 @@ class ReflectionService:
         assessment_data: Dict[str, Any],
         alternatives: Dict[str, Any] | None,
         answers: Dict[str, str],
-        questions: Dict[str, str]
+        questions: Dict[str, str],
+        question_flags: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
         Finalize assessment and create response structure
@@ -320,9 +338,6 @@ class ReflectionService:
             ai_appropriateness_score >= self.ai_appropriateness_threshold and
             overall_score >= self.overall_threshold
         )
-        
-        qa_context = self._build_qa_context(answers, questions)
-        question_flags = await self._analyze_answer_quality(answers, questions, qa_context)
         
         return {
             "ethical_score": ethical_score,
@@ -361,25 +376,28 @@ class ReflectionService:
             return None
             
         prompt = f"""
-        Generate specific alternatives for this humanitarian project since AI may not be appropriate.
+        Generate practical alternatives for this humanitarian project since AI may not be appropriate.
 
         PROJECT: {project_description}
-
         USER RESPONSES: {qa_context}
 
-        Provide specific, actionable alternatives relevant to this exact project context.
-        Make suggestions concrete and implementable.
+        Consider typical humanitarian constraints:
+        - Limited technical expertise and resources
+        - Field conditions (connectivity, infrastructure)
+        - Time pressures and organizational capacity
+
+        Provide specific, implementable alternatives for this exact project context.
 
         RETURN JSON:
         {{
-            "digital_alternatives": ["Specific digital solution for this project"],
-            "process_improvements": ["Specific process improvement"],
-            "non_digital_solutions": ["Specific manual/community approach"],
-            "hybrid_approaches": ["Specific AI-assisted approach"],
-            "reasoning": "Why these alternatives are better for this humanitarian context"
+            "digital_alternatives": ["Specific digital solution requiring no AI"],
+            "process_improvements": ["Specific workflow or method improvement"],
+            "non_digital_solutions": ["Specific manual/community-based approach"],
+            "hybrid_approaches": ["Specific simple tech + human approach"],
+            "reasoning": "Why these alternatives suit this humanitarian context better than AI"
         }}
         """
-        
+
         try:
             response = await llm_service.analyze_text("", prompt)
             cleaned_response = self._clean_json_response(response)
@@ -405,7 +423,6 @@ class ReflectionService:
         if first_brace != -1 and last_brace != -1:
             response = response[first_brace:last_brace + 1]
         
-        # Fix quote issues in JSON by cleaning malformed quotes
         response = response.replace('": "', '": "').replace('":', '":')
         
         return response.strip()
